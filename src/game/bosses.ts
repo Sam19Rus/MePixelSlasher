@@ -66,7 +66,7 @@ export const BOSSES: Record<string, BossDef> = {
       { name: 'РАСПЛАВ', telegraph: 0.5, dmg: 14 },
       { name: 'СБРОС ЗАГОТОВОК', telegraph: 0.5, dmg: 12 },
     ],
-    arenaBreak: { radius: 4, toast: 'КОНВЕЙЕР ВЗБЕСИЛСЯ: ЛИНия ОГНЯ' },
+    arenaBreak: { radius: 4, toast: 'КОНВЕЙЕР ВЗБЕСИЛСЯ: ЛИНИЯ ОГНЯ' },
     rewards: { credits: [450, 750], weaponRarity: 3, permanentChance: 1 },
   },
   // ---- ФАБРИКА: сошедший с ума ИИ управления ----
