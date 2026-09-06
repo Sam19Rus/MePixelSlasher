@@ -6,12 +6,12 @@ export type ShipZoneId = 'nav' | 'armory' | 'storage' | 'bay' | 'info' | 'med'
 export interface ShipZone { id: ShipZoneId; label: string; hint: string; x: number; y: number; w: number; h: number; color: string }
 
 export const SHIP_ZONES: ShipZone[] = [
-  { id: 'nav', label: 'НАВИГАЦИЯ', hint: 'Карта системы и начало экспедиции', x: 234, y: 30, w: 18, h: 34, color: '#3fe0ff' },
-  { id: 'info', label: 'ГОЛО-СТОЛ', hint: 'Досье наёмника и статистика', x: 162, y: 64, w: 30, h: 14, color: '#c96bff' },
-  { id: 'armory', label: 'ОРУЖЕЙНАЯ', hint: 'Верстаки, стойки и постоянные трофеи', x: 84, y: 32, w: 40, h: 26, color: '#ff8a3d' },
-  { id: 'storage', label: 'ХРАНИЛИЩЕ', hint: 'Грузовой отсек и контейнеры', x: 22, y: 56, w: 36, h: 22, color: '#f5a623' },
-  { id: 'bay', label: 'ОТСЕК ОТРЯДА', hint: 'Зарядные платформы компаньонов (до 2 в отряд)', x: 158, y: 148, w: 12, h: 26, color: '#7dff5e' },
-  { id: 'med', label: 'МЕДОТСЕК', hint: 'Восстановление перед высадкой', x: 234, y: 140, w: 14, h: 26, color: '#ff5e8a' },
+  { id: 'nav', label: 'НАВИГАЦИЯ', hint: 'Карта системы и начало экспедиции', x: 232, y: 28, w: 22, h: 40, color: '#3fe0ff' },
+  { id: 'info', label: 'ГОЛО-СТОЛ', hint: 'Досье наёмника и статистика', x: 160, y: 62, w: 34, h: 20, color: '#c96bff' },
+  { id: 'armory', label: 'ОРУЖЕЙНАЯ', hint: 'Верстаки, стойки и постоянные трофеи', x: 82, y: 32, w: 44, h: 30, color: '#ff8a3d' },
+  { id: 'storage', label: 'ХРАНИЛИЩЕ', hint: 'Грузовой отсек и контейнеры', x: 20, y: 54, w: 40, h: 26, color: '#f5a623' },
+  { id: 'bay', label: 'ОТСЕК ОТРЯДА', hint: 'Зарядные платформы компаньонов (до 2 в отряд)', x: 166, y: 146, w: 20, h: 28, color: '#7dff5e' },
+  { id: 'med', label: 'МЕДОТСЕК', hint: 'Восстановление перед высадкой', x: 232, y: 138, w: 20, h: 30, color: '#ff5e8a' },
 ]
 
 interface Blocker { x: number; y: number; w: number; h: number }
@@ -30,8 +30,8 @@ const BLOCKERS: Blocker[] = [
   { x: 76, y: 18, w: 60, h: 10 }, { x: 116, y: 60, w: 20, h: 12 },
   // центральный зал: голо-стол
   { x: 166, y: 40, w: 22, h: 22 },
-  // навигация: консоль + кресло
-  { x: 252, y: 20, w: 28, h: 44 }, { x: 234, y: 64, w: 12, h: 12 },
+  // навигация: консоль у правого борта + кресло штурмана у левой переборки (проход к консоли свободен)
+  { x: 252, y: 20, w: 28, h: 44 }, { x: 218, y: 40, w: 12, h: 12 },
   // инженерный: реактор
   { x: 24, y: 126, w: 28, h: 42 },
   // каюта: койка, шкаф, стол
@@ -174,9 +174,10 @@ export function drawShipInterior(ctx: CanvasRenderingContext2D, t: number, activ
     const lines = 2 + ((i + Math.floor(t * 2)) % 2)
     for (let l = 0; l < lines; l++) px(ctx, 258, 28 + i * 13 + l * 3, 12 - l * 3, 1, i === 1 ? '#f5a623' : '#3fe0ff')
   }
-  // кресло пилота
-  px(ctx, 234, 64, 12, 12, '#39424e')
-  px(ctx, 236, 66, 8, 8, '#274b5e')
+  // кресло штурмана (у левой переборки, развёрнуто к консоли)
+  px(ctx, 218, 40, 12, 12, '#39424e')
+  px(ctx, 220, 42, 8, 8, '#274b5e')
+  px(ctx, 228, 43, 2, 6, '#4a5568')
   // радар
   ctx.save()
   ctx.translate(276, 74)
