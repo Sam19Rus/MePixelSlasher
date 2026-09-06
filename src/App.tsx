@@ -343,6 +343,8 @@ export default function App() {
               ['ЦЕЛЕЙ УСТРАНЕНО', snap!.meta.stats.kills],
               ['СТРАЖЕЙ ПОВЕРЖЕНО', snap!.meta.stats.bosses],
               ['ЛУЧШАЯ СЕРИЯ', snap!.meta.stats.bestKills],
+              ['ОБЪЕКТОВ ЗАЧИЩЕНО', snap!.meta.clearedCount],
+              ['ТОЧЕК ВЫСАДКИ ОТКРЫТО', snap!.meta.discoveredSites.length],
             ].map(([l, v]) => (
               <div key={l as string} className="border border-[#1e2a38] px-3 py-2">
                 <div className="font-display text-[6px] text-[#5e7a90]">{l as string}</div>
