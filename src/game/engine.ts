@@ -8,8 +8,9 @@ import {
 } from './data'
 import { audio } from './audio'
 import * as SP from './sprites'
-import { makeStreams, type RngStreams } from './rng'
-import { getRegion, REGIONS, type RegionDef } from './regions'
+import { makeStreams, Rng, type RngStreams } from './rng'
+import { getRegion, REGIONS, landingWorldPos, FACTIONS, type RegionDef } from './regions'
+import { makeEncounter, updateEncounterLogic, type Encounter } from './encounters'
 import { CELL, TILE, WALL_M, POI_DEFS, poiForCell, makeStarterDungeon, dungeonTileAt, setDungeonTile, inDungeonBounds, roomAt, type Poi, type DungeonLayout } from './structures'
 import { BOSSES, makeBoss, drawBoss, type BossState } from './bosses'
 import { Director } from './director'
@@ -113,6 +114,8 @@ export class Engine {
   pois = new Map<string, Poi | null>()
   activatedPois = new Set<string>()
   touchedRelays = new Set<string>()
+  encounters: Encounter[] = []
+  encounterT = 0
   activeDungeonPoi: Poi | null = null
   boss: BossState | null = null
   director = new Director()
@@ -289,9 +292,10 @@ export class Engine {
     this.region = region
     this.seed = (Date.now() % 1000000) + 1
     this.streams = makeStreams(this.seed)
-    // детерминированная точка высадки вблизи стартового комплекса
+    // Точка высадки с глобуса -> реальные координаты мира
     const lz = this.streams.world
-    this.landingOffset = { x: (site - 1) * 90 + lz.range(-30, 30), y: lz.range(-30, 30) }
+    const wp = landingWorldPos(region, site)
+    this.landingOffset = { x: wp.x + lz.range(-20, 20), y: wp.y + lz.range(-20, 20) }
     this.chunks.clear(); this.chunkOrder = []; this.obstacles.clear(); this.materialized.clear()
     this.enemies = []; this.bullets = []; this.particles = []; this.floaters = []
     this.capsules = []; this.pickups = []; this.companions = []; this.pods = []
@@ -313,9 +317,15 @@ export class Engine {
     this.p.x = this.landingOffset.x; this.p.y = this.landingOffset.y
     this.spawnAnim = 0.001; this.camX = this.p.x; this.camY = this.p.y; this.shake = 0
     this.spawnEnemyT = 3
-    const starter = makeStarterDungeon(this.seed, region)
-    this.pois.set('starter', starter)
-    this.capsules.push(this.makeCapsule(this.p.x + 200, this.p.y + 160, 1, false))
+    this.encounters = []
+    this.encounterT = 0
+    // Планета живёт сразу: несколько событий вокруг места высадки (но не вплотную)
+    const ew = this.streams.world
+    for (let i = 0; i < 5; i++) {
+      const a = ew.next() * Math.PI * 2
+      const dist = 320 + ew.next() * 380
+      this.encounters.push(makeEncounter(ew, this.p.x + Math.cos(a) * dist, this.p.y + Math.sin(a) * dist, region.tier, region.enemies))
+    }
     for (const uid of metaApi.state.deployed) {
       const pc = metaApi.state.companions.find((c) => c.uid === uid)
       if (pc) this.spawnCompanion(this.p.x + 40 * rnd() - 20, this.p.y + 40 * rnd() - 20, pc.defKind, pc.name, true, pc.uid)
@@ -326,8 +336,10 @@ export class Engine {
     this.transitioning = false
     this.beamT = -1
     this.hooks.onStart()
+    const fac = FACTIONS[region.faction]
     this.hooks.onToast({ text: `ЭКСПЕДИЦИЯ: ${region.name}`, color: region.color })
-    window.setTimeout(() => this.hooks.onToast({ text: 'СИГНАЛ: КОМПЛЕКС ОБНАРУЖЕН НА СЕВЕРО-ВОСТОКЕ', color: '#3fe0ff' }), 2600)
+    window.setTimeout(() => this.hooks.onToast({ text: `ТЕРРИТОРИЯ: ${fac.name}`, color: fac.color }), 1800)
+    window.setTimeout(() => this.hooks.onToast({ text: 'СКАНЕР: ЗАМЕЧЕНЫ ПАТРУЛИ. ДЕРЖИТЕ ДИСТАНЦИЮ', color: '#3fe0ff' }), 4200)
     this.burst(this.p.x, this.p.y, 26, '#7dffea', 3)
     audio.teleport()
   }
@@ -393,11 +405,13 @@ export class Engine {
     audio.reload()
   }
 
+  // Регион пересекает несколько биомов: шум выбирает, в каком из них точка
   biomeAt(x: number, y: number) {
     if (this.mode !== 'game') return 0
+    const biomes = this.region.biomes
     const n = vnoise(x * 0.0021, y * 0.0021, this.seed + 77)
-    if (n < 0.22) return this.region.biomeAlt
-    if (n > 0.85) return (this.region.biome + 2) % 6
+    if (n < 0.35 && biomes.length > 1) return biomes[1]
+    if (n > 0.88) return (this.region.biome + 3) % 6 // редкие вкрапления
     return this.region.biome
   }
   groundColor(b: number, bx: number, by: number) {
@@ -587,6 +601,7 @@ export class Engine {
           }
         }
         this.updateDirector(dt)
+        this.updateEncounters(dt)
         this.updateEnemies(dt)
         this.updateBoss(dt)
         this.updateBullets(dt)
@@ -608,6 +623,51 @@ export class Engine {
     }
     this.snapT -= dt
     if (this.snapT <= 0) { this.snapT = 0.12; this.emitSnap() }
+  }
+
+  // ============================================================
+  // МИРОВЫЕ СОБЫТИЯ (encounters): патрули, лагеря, конфликты...
+  // ============================================================
+  updateEncounters(dt: number) {
+    if (this.dead) return
+    const p = this.p
+    this.encounterT -= dt
+    // пополняем события вокруг игрока (детерминированно от seed + позиции клетки)
+    if (this.encounterT <= 0) {
+      this.encounterT = 1.2
+      const cx = Math.floor(p.x / 512), cy = Math.floor(p.y / 512)
+      for (let gy = cy - 1; gy <= cy + 1; gy++) for (let gx = cx - 1; gx <= cx + 1; gx++) {
+        const present = this.encounters.some((e) => !e.dead && Math.floor(e.x / 512) === gx && Math.floor(e.y / 512) === gy)
+        if (!present && hash2(gx, gy, this.seed + 5150) < 0.4) {
+          const ew = new Rng(Math.abs((this.seed ^ (gx * 73856093 + gy * 19349663))) >>> 0)
+          this.encounters.push(makeEncounter(ew, gx * 512 + 256 + (hash2(gx, gy, this.seed) - 0.5) * 300, gy * 512 + 256 + (hash2(gy, gx, this.seed) - 0.5) * 300, this.region.tier, this.region.enemies))
+        }
+      }
+      // удаляем далёкие/мёртвые
+      this.encounters = this.encounters.filter((e) => !e.dead && Math.hypot(e.x - p.x, e.y - p.y) < 1600)
+    }
+    // логика + материализация
+    for (const e of this.encounters) {
+      updateEncounterLogic(e, dt, p.x, p.y)
+      const d = Math.hypot(e.x - p.x, e.y - p.y)
+      // событие рядом -> спавним реальных врагов один раз
+      if (!e.dead && e.spawnT === 0 && d < e.radius) {
+        e.spawnT = 1
+        const n = Math.min(e.types.length, 6)
+        for (let i = 0; i < n; i++) {
+          const a = rnd() * Math.PI * 2
+          const rr = 24 + rnd() * 40
+          this.spawnEnemy(e.x + Math.cos(a) * rr, e.y + Math.sin(a) * rr, e.types[i], e.tier)
+        }
+        const labels: Record<string, string> = {
+          patrol: 'ПАТРУЛЬ ЗАМЕТИЛ ВАС', camp: 'ЛАГЕРЬ: ОГОНЬ ПО ПРИШЕЛЬЦУ',
+          conflict: 'ВЫ ВЛЕТЕЛИ В ПЕРЕСТРЕЛКУ', ambush: 'ЗАСАДА!', convoy: 'КОНВОЙ: ОХРАНА ОТКРЫЛА ОГОНЬ',
+          pursuit: 'ПРЕСЛЕДОВАНИЕ',
+        }
+        this.hooks.onToast({ text: labels[e.kind] || 'ПРОТИВНИК РЯДОМ', color: '#ff5533' })
+        audio.alarm()
+      }
+    }
   }
 
   updateDirector(dt: number) {
