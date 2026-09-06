@@ -10,7 +10,7 @@ import { audio } from './audio'
 import * as SP from './sprites'
 import { makeStreams, type RngStreams } from './rng'
 import { getRegion, REGIONS, type RegionDef } from './regions'
-import { CELL, TILE, POI_DEFS, poiForCell, makeStarterDungeon, dungeonTileAt, setDungeonTile, inDungeonBounds, type Poi, type DungeonLayout } from './structures'
+import { CELL, TILE, POI_DEFS, poiForCell, makeStarterDungeon, dungeonTileAt, setDungeonTile, inDungeonBounds, roomAt, type Poi, type DungeonLayout } from './structures'
 import { BOSSES, makeBoss, drawBoss, type BossState } from './bosses'
 import { Director } from './director'
 import { metaApi, artifactBonuses, PERMANENT_POOL } from './meta'
@@ -102,6 +102,7 @@ export class Engine {
   fallPods: FallPod[] = []
   weather: Particle[] = []
   shuttle: { t: number; released: boolean } | null = null
+  shuttleWarned = false
 
   pois = new Map<string, Poi | null>()
   activatedPois = new Set<string>()
@@ -460,12 +461,37 @@ export class Engine {
   }
 
   pushOut(e: { x: number; y: number }, r: number) {
+    // внутри данжа поверхностные препятствия не действуют
+    if (this.activeDungeonPoi) return
     for (const o of this.nearObstacles(e.x, e.y, r + 10)) {
       const dx = e.x - o.x, dy = e.y - o.y
       const d = Math.hypot(dx, dy)
       const min = o.r + r
       if (d < min && d > 0.01) { e.x = o.x + (dx / d) * min; e.y = o.y + (dy / d) * min }
     }
+  }
+
+  /** Визуальный профиль оружия для спрайт-сборки */
+  wv(o: unknown): SP.WeaponVisual | null {
+    if (!o) return null
+    const w = o as Weapon
+    return { proj: w.proj, kitIdx: w.kitIdx, rarity: w.rarity, color: w.color, pellets: w.pellets, explosive: w.explosive, pierce: w.pierce }
+  }
+
+  /** Движение сущности: на поверхности — pushOut, в данже — скольжение вдоль стен */
+  moveEnt(e: { x: number; y: number }, mx: number, my: number, r: number) {
+    if (!this.activeDungeonPoi) {
+      e.x += mx; e.y += my
+      this.pushOut(e, r)
+      return
+    }
+    const poi = this.activeDungeonPoi
+    const ok = (x: number, y: number) =>
+      !this.tileSolidP(poi, x - r, y) && !this.tileSolidP(poi, x + r, y) &&
+      !this.tileSolidP(poi, x, y - r) && !this.tileSolidP(poi, x, y + r)
+    if (ok(e.x + mx, e.y + my)) { e.x += mx; e.y += my; return }
+    if (mx !== 0 && ok(e.x + mx, e.y)) { e.x += mx; return }
+    if (my !== 0 && ok(e.x, e.y + my)) e.y += my
   }
 
   tileSolidP(poi: Poi, wx: number, wy: number): boolean {
@@ -638,6 +664,18 @@ export class Engine {
     }
     if (inside !== this.activeDungeonPoi) {
       this.activeDungeonPoi = inside
+      if (inside && inside.dungeon) {
+        // поверхностные враги не сопровождают игрока внутрь комплекса
+        const d = inside.dungeon
+        const m = 24
+        for (let i = this.enemies.length - 1; i >= 0; i--) {
+          const e = this.enemies[i]
+          if (e.x > d.ox - m && e.x < d.ox + d.cols * TILE + m && e.y > d.oy - m && e.y < d.oy + d.rows * TILE + m) {
+            this.enemies.splice(i, 1)
+          }
+        }
+        this.bullets = this.bullets.filter((b) => b.friendly)
+      }
       if (inside && inside.dungeon && inside.ds && !inside.ds.spawned) {
         inside.ds.spawned = true
         const d = inside.dungeon
@@ -857,8 +895,7 @@ export class Engine {
       }
     } else {
       const spd = b.def.speed * (1 + b.phase * 0.3)
-      if (d > 46) { b.x += (dx / d) * spd * dt; b.y += (dy / d) * spd * dt }
-      if (this.activeDungeonPoi) this.collideDungeon(b, 12)
+      if (d > 46) this.moveEnt(b, (dx / d) * spd * dt, (dy / d) * spd * dt, 12)
       if (d < b.def.r + 6 && p.iframes <= 0) this.damagePlayer(b.def.dmg * 0.6)
       if (b.atkCd <= 0 && !this.dead) {
         const opts: string[] = b.phase === 0 ? ['slam', 'burst'] : b.phase === 1 ? ['slam', 'burst', 'ring'] : ['dash', 'ring', 'slam']
@@ -972,6 +1009,16 @@ export class Engine {
     if (!this.shuttle) return
     this.shuttle.t += dt
     if (!this.shuttle.released && this.shuttle.t >= 1.8) {
+      // внутри комплекса сброс невозможен — шаттл барражирует до выхода
+      if (this.activeDungeonPoi) {
+        this.shuttle.t = 1.2
+        if (!this.shuttleWarned) {
+          this.shuttleWarned = true
+          this.hooks.onToast({ text: 'ШАТТЛ: ОЖИДАЕТ ВАШЕГО ВЫХОДА ИЗ КОМПЛЕКСА', color: '#f5a623' })
+        }
+        return
+      }
+      this.shuttleWarned = false
       this.shuttle.released = true
       this.fallPods.push({ x: this.p.x, y: this.p.y + 30, t: 0, dur: 1.1 })
     }
@@ -1055,13 +1102,11 @@ export class Engine {
     }
     if (p.dashT > 0) {
       p.dashT -= dt
-      p.x += p.dashVX * dt; p.y += p.dashVY * dt
+      this.moveEnt(p, p.dashVX * dt, p.dashVY * dt, 5)
       if (rnd() < 0.6) this.particles.push({ x: p.x, y: p.y, vx: 0, vy: 0, life: 0.25, max: 0.25, color: 'rgba(63,224,255,0.5)', size: 4, grav: 0 })
     } else {
-      p.x += mx * spd * dt; p.y += my * spd * dt
+      this.moveEnt(p, mx * spd * dt, my * spd * dt, 5)
     }
-    this.pushOut(p, 5)
-    this.collideDungeon(p, 5)
     const wx = this.camX - this.W / 2 + this.mouse.x, wy = this.camY - VIEW_H / 2 + this.mouse.y
     p.aim = Math.atan2(wy - (p.y - 3), wx - p.x)
     p.fireCd -= dt
@@ -1179,12 +1224,9 @@ export class Engine {
       const dx = tx - c.x, dy = ty - c.y, d = Math.hypot(dx, dy)
       if (d > 4) {
         const sp = Math.min(c.def.speed, d * 4)
-        c.x += (dx / d) * sp * dt
-        c.y += (dy / d) * sp * dt
-        if (!c.def.flying) this.pushOut(c, 4)
+        this.moveEnt(c, (dx / d) * sp * dt, (dy / d) * sp * dt, 4)
       }
-      if (d > 130) { c.x = p.x + (rnd() - 0.5) * 30; c.y = p.y + (rnd() - 0.5) * 30 }
-      this.collideDungeon(c, 4)
+      if (d > (this.activeDungeonPoi ? 56 : 130)) { c.x = p.x + (rnd() - 0.5) * 24; c.y = p.y + (rnd() - 0.5) * 24 }
       let target: Enemy | BossState | null = null
       let bd = c.def.range * mRange
       for (const e of this.enemies) {
@@ -1258,19 +1300,15 @@ export class Engine {
         }
       } else if (e.type === 'grunt' || e.type === 'brute') {
         const stop = e.type === 'brute' ? 24 : 14
-        if (d > stop) { e.x += (dx / d) * e.speed * dt; e.y += (dy / d) * e.speed * dt }
+        if (d > stop) this.moveEnt(e, (dx / d) * e.speed * dt, (dy / d) * e.speed * dt, e.r)
         else if (e.atkCd <= 0) e.windup = e.type === 'brute' ? 0.6 : 0.4
-        this.pushOut(e, e.r)
-        this.collideDungeon(e, e.r)
       } else if (e.type === 'gunner') {
         const want = 90
         let mx2 = 0, my2 = 0
         if (d > want + 20) { mx2 = dx / d; my2 = dy / d }
         else if (d < want - 20) { mx2 = -dx / d; my2 = -dy / d }
         else { mx2 = (-dy / d) * e.strafe; my2 = (dx / d) * e.strafe }
-        e.x += mx2 * e.speed * dt; e.y += my2 * e.speed * dt
-        this.pushOut(e, e.r)
-        this.collideDungeon(e, e.r)
+        this.moveEnt(e, mx2 * e.speed * dt, my2 * e.speed * dt, e.r)
         e.shootT -= dt
         if (e.burst > 0 && e.shootT <= 0) {
           e.burst--
@@ -1287,11 +1325,11 @@ export class Engine {
         e.swoopT -= dt
         if (e.swoop > 0) {
           e.swoop -= dt
-          e.x += e.kbx * dt; e.y += e.kby * dt
+          this.moveEnt(e, e.kbx * dt, e.kby * dt, e.r)
           if (d < 12 && p.iframes <= 0) this.damagePlayer(e.dmg)
         } else {
-          if (d > 60) { e.x += (dx / d) * e.speed * dt; e.y += (dy / d) * e.speed * dt }
-          else { e.x += (-dy / d) * e.speed * 0.6 * dt * e.strafe; e.y += (dx / d) * e.speed * 0.6 * dt * e.strafe }
+          if (d > 60) this.moveEnt(e, (dx / d) * e.speed * dt, (dy / d) * e.speed * dt, e.r)
+          else this.moveEnt(e, (-dy / d) * e.speed * 0.6 * dt * e.strafe, (dx / d) * e.speed * 0.6 * dt * e.strafe, e.r)
           if (e.swoopT <= 0 && d < 120 && !this.dead) {
             e.swoopT = 2.4 + rnd() * 2
             if (e.weapon === 0 || e.weapon === 1) {
@@ -1622,6 +1660,7 @@ export class Engine {
         break
       }
       case 'boss': this.boss = makeBoss(BOSSES.warden, p.x + 90, p.y); audio.bossRoar(); break
+      case 'supply': this.spawnSupply(); break
       case 'kill': this.god = false; this.damagePlayer(99999); break
       case 'artifact': this.grantPermanent(); break
       case 'region': {
@@ -1705,7 +1744,7 @@ export class Engine {
     for (const poi of this.pois.values()) {
       if (!poi) continue
       if (poi.x < ox - 160 || poi.x > ox + W + 160 || poi.y < oy - 160 || poi.y > oy + H + 160) continue
-      SP.drawPoi(ctx, poi, t, !!poi.dungeon)
+      SP.drawPoi(ctx, poi, t)
       const pd = Math.hypot(poi.x - this.p.x, poi.y - this.p.y)
       if (pd < 150) {
         ctx.font = '6px "Press Start 2P", monospace'
@@ -1718,7 +1757,10 @@ export class Engine {
     }
 
     const dp = this.activeDungeonPoi
-    if (dp && dp.dungeon) this.drawDungeonTiles(ctx, dp, ox, oy, W, H, t)
+    if (dp && dp.dungeon) {
+      this.drawDungeonTiles(ctx, dp, ox, oy, W, H, t)
+      SP.drawDungeonDecor(ctx, dp, t)
+    }
 
     type D = { y: number; f: () => void }
     const ds: D[] = []
@@ -1727,17 +1769,29 @@ export class Engine {
     for (const pk of this.pickups) ds.push({
       y: pk.y, f: () => {
         if (pk.rej !== undefined) { ctx.globalAlpha = pk.rej < 0.5 ? 0.35 : 0.6; SP.drawPickup(ctx, { ...pk, color: '#4a5a6a' }, t); ctx.globalAlpha = 1 }
-        else SP.drawPickup(ctx, pk, t)
+        else SP.drawPickup(ctx, pk, t, this.wv(pk.weapon))
       },
     })
-    for (const c of this.companions) ds.push({ y: c.y, f: () => { SP.drawCompanion(ctx, c, t); if (c.weapon) SP.px(ctx, c.x + 4, c.y - 7, 5, 2, c.weapon.color) } })
+    for (const c of this.companions) ds.push({
+      y: c.y, f: () => {
+        const wi: SP.WeaponVisual | null = c.weapon
+          ? { proj: c.def.proj, kitIdx: Math.max(0, COMP_DEFS.findIndex((d) => d.kind === c.kind)) * 4 + 1, rarity: 2, color: c.weapon.color }
+          : null
+        SP.drawCompanion(ctx, c, t, wi)
+      },
+    })
     for (const e of this.enemies) if (e.x > ox - 40 && e.x < ox + W + 40 && e.y > oy - 50 && e.y < oy + H + 40) ds.push({ y: e.y, f: () => { SP.drawEnemy(ctx, e, t); if (e.windup > 0 && (e.type === 'grunt' || e.type === 'brute')) { ctx.fillStyle = `rgba(255,80,60,${0.25 + Math.sin(t * 30) * 0.15})`; ctx.beginPath(); ctx.arc(e.x, e.y, e.type === 'brute' ? 30 : 22, 0, Math.PI * 2); ctx.fill() } if (e.hp < e.maxHp) { const w = e.r * 2; SP.px(ctx, e.x - w / 2, e.y - e.r - 12, w, 2, '#1b1f26'); SP.px(ctx, e.x - w / 2, e.y - e.r - 12, Math.max(1, w * (e.hp / e.maxHp)), 2, '#ff5533') } } })
     const p = this.p
     if (!this.dead) ds.push({
       y: p.y, f: () => {
         if (p.iframes > 0 && Math.sin(t * 40) > 0 && this.spawnAnim >= 1) ctx.globalAlpha = 0.45
         const w = this.curWeapon()
-        SP.drawPlayer(ctx, { ...p, weaponColor: w ? w.color : '#9aa7b8' }, t)
+        SP.drawPlayer(ctx, {
+          x: p.x, y: p.y, aim: p.aim, walkT: p.walkT, slashT: p.slashT, dashT: p.dashT,
+          chestColor: '#5e6e7e', weaponColor: w ? w.color : '#9aa7b8',
+          armor: p.armor.map((a) => (a ? { color: (a as Armor).color, rarity: (a as Armor).rarity } : null)),
+          weapon: w ? this.wv(w) : null,
+        }, t)
         ctx.globalAlpha = 1
         if (this.spawnAnim < 1) {
           const k = this.spawnAnim
@@ -1764,6 +1818,7 @@ export class Engine {
       ctx.fillRect(Math.round(wpt.x), Math.round(wpt.y), wpt.size, wpt.size)
     }
     ctx.globalAlpha = 1
+    if (this.activeDungeonPoi) this.drawDungeonLighting(ctx, t)
     ctx.textAlign = 'center'
     for (const f of this.floaters) {
       ctx.globalAlpha = clamp(f.life / 0.4, 0, 1)
@@ -1817,16 +1872,66 @@ export class Engine {
     for (let ty = ty0; ty <= ty1; ty++) for (let tx = tx0; tx <= tx1; tx++) {
       const tile = d.tiles[ty * d.cols + tx]
       const wx = d.ox + tx * TILE, wy = d.oy + ty * TILE
-      let extra: { on?: boolean } = {}
-      if (tile === 2) extra = { on: d.door.open }
+      const room = roomAt(d, tx, ty)
+      const extra: { on?: boolean; room?: string | null; v?: number } = { room: room ? room.kind : null, v: hash2(tx * 7, ty * 13, this.seed) }
+      if (tile === 2) extra.on = d.door.open
       else if (tile === 3) {
         const sw = d.switches.find((s) => Math.floor((s.x - d.ox) / TILE) === tx && Math.floor((s.y - d.oy) / TILE) === ty)
-        extra = { on: !!sw?.on }
+        extra.on = !!sw?.on
       } else if (tile === 5) {
-        extra = { on: (t + hash2(tx, ty, this.seed) * 2.2) % 2.2 > 1.6 }
+        extra.on = (t + hash2(tx, ty, this.seed) * 2.2) % 2.2 > 1.6
       }
       SP.drawDungeonTile(ctx, wx, wy, tile, style, t, extra)
     }
+  }
+
+  /** Затемнение данжа с «прорезанными» источниками света */
+  lightCv: HTMLCanvasElement | null = null
+  drawDungeonLighting(ctx: CanvasRenderingContext2D, t: number) {
+    const poi = this.activeDungeonPoi
+    if (!poi || !poi.dungeon) return
+    const d = poi.dungeon
+    const w = d.cols * TILE, h = d.rows * TILE
+    if (!this.lightCv) this.lightCv = document.createElement('canvas')
+    if (this.lightCv.width !== w || this.lightCv.height !== h) { this.lightCv.width = w; this.lightCv.height = h }
+    const g = this.lightCv.getContext('2d')!
+    g.clearRect(0, 0, w, h)
+    g.fillStyle = 'rgba(3,6,12,0.66)'
+    g.fillRect(0, 0, w, h)
+    g.globalCompositeOperation = 'destination-out'
+    const hole = (x: number, y: number, r: number, a: number) => {
+      const lg = g.createRadialGradient(x, y, 2, x, y, r)
+      lg.addColorStop(0, `rgba(255,255,255,${a})`)
+      lg.addColorStop(1, 'rgba(255,255,255,0)')
+      g.fillStyle = lg
+      g.fillRect(x - r, y - r, r * 2, r * 2)
+    }
+    // свет игрока
+    hole(this.p.x - d.ox, this.p.y - d.oy, 74, 0.95)
+    // лампы по зонам
+    for (let i = 0; i < d.lamps.length; i++) {
+      const l = d.lamps[i]
+      const flick = 0.55 + Math.sin(t * (3 + (i % 4)) + i * 2) * 0.18
+      hole(l.x - d.ox, l.y - d.oy, l.r, flick)
+    }
+    // рубильники и дверь
+    for (const s of d.switches) if (s.on) hole(s.x - d.ox, s.y - d.oy, 20, 0.7)
+    if (d.door.open) hole(d.ox + d.door.x * TILE + 8 - d.ox, d.oy + d.door.y * TILE + 8 - d.oy, 26, 0.6)
+    // входной проём
+    hole(0, 12 * TILE + 16, 30, 0.8)
+    // ядро босса
+    if (this.boss) hole(this.boss.x - d.ox, this.boss.y - d.oy, 50, 0.85)
+    g.globalCompositeOperation = 'source-over'
+    ctx.drawImage(this.lightCv, d.ox, d.oy)
+    // цветные ореолы ламп (аддитивно)
+    ctx.save()
+    ctx.globalCompositeOperation = 'lighter'
+    for (let i = 0; i < d.lamps.length; i += 2) {
+      const l = d.lamps[i]
+      ctx.fillStyle = l.color + '14'
+      ctx.beginPath(); ctx.arc(l.x, l.y, l.r * 0.6, 0, Math.PI * 2); ctx.fill()
+    }
+    ctx.restore()
   }
 
   drawMinimap() {
@@ -1885,7 +1990,11 @@ export class Engine {
     }
     ctx.save()
     ctx.translate(Math.round(-(this.camX - W / 2)), Math.round(-(this.camY - H / 2)))
-    drawShipInterior(ctx, t, this.shipZone, this.shipP.x, this.shipP.y)
+    const bots = metaApi.state.deployed
+      .map((uid) => metaApi.state.companions.find((c) => c.uid === uid))
+      .filter((c): c is NonNullable<typeof c> => !!c)
+      .map((c) => ({ kind: c.defKind, color: c.color }))
+    drawShipInterior(ctx, t, this.shipZone, this.shipP.x, this.shipP.y, bots)
     SP.drawPlayer(ctx, {
       x: this.shipP.x, y: this.shipP.y, aim: Math.PI / 2,
       walkT: this.keys.KeyW || this.keys.KeyS || this.keys.KeyA || this.keys.KeyD ? this.menuT : 0,

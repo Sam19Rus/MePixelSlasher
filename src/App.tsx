@@ -391,7 +391,7 @@ export default function App() {
               ['enemy', 'ВРАГ'], ['elite', 'ЭЛИТА'], ['weapon', 'СТВОЛ'], ['armor', 'БРОНЯ'],
               ['companion', 'РОБОТ'], ['heart', 'СЕРДЦЕ'], ['milestone', 'РУБЕЖ'], ['poi', 'К POI'],
               ['dungeon', 'В ДАНЖ'], ['boss', 'БОСС'], ['artifact', 'ПРЕДМЕТ'], ['region', 'РЕГИОН'],
-              ['credits', '+1000'], ['god', 'GOD'], ['kill', 'СМЕРТЬ'], ['wipe', 'СБРОС'],
+              ['supply', 'СНАБЖ'], ['credits', '+1000'], ['god', 'GOD'], ['kill', 'СМЕРТЬ'], ['wipe', 'СБРОС'],
             ] as [string, string][]).map(([a, l]) => (
               <button key={a} onClick={() => eng().dbg(a)} className="font-display text-[6px] text-[#8fa5ba] border border-[#1e2a38] px-1 py-1.5 hover:text-[#3fe0ff] hover:border-[#3fe0ff55]">
                 {l}
