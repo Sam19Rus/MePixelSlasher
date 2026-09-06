@@ -675,6 +675,200 @@ export function drawPoi(ctx: CanvasRenderingContext2D, poi: { type: string; x: n
 }
 
 // ============================================================
+// ВНЕШНИЕ СТРУКТУРЫ — 2.5D (крыша + южный фасад с высотой)
+// ============================================================
+const WALL_H = 30
+
+interface StructPoi {
+  type: string; x: number; y: number; state: string; seed: number
+  dungeon?: unknown
+  fp?: { x: number; y: number; w: number; h: number }
+  doorWorld?: { x: number; y: number }
+}
+const shash = (n: number, s: number) => {
+  let h = (n | 0) * 2654435761 + (s | 0) * 97
+  h = Math.imul(h ^ (h >>> 13), 1274126177)
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296
+}
+
+/** Экструдированный блок: крыша сверху + южный фасад с высотой */
+function block3d(ctx: CanvasRenderingContext2D, fx: number, fy: number, fw: number, fh: number, H: number, roof: string, roofLight: string, wall: string, wallDark: string) {
+  // тень
+  ctx.fillStyle = 'rgba(0,0,0,0.32)'
+  ctx.fillRect(fx + 5, fy + fh, fw, 7)
+  // южный фасад
+  px(ctx, fx, fy + fh - H, fw, H, wall)
+  px(ctx, fx + fw - 4, fy + fh - H, 4, H, wallDark)
+  px(ctx, fx, fy + fh - 2, fw, 2, wallDark)
+  // крыша
+  px(ctx, fx, fy - H, fw, fh, roof)
+  px(ctx, fx, fy - H, fw, 3, roofLight)
+  px(ctx, fx, fy - H, 3, fh, roofLight)
+}
+
+export function drawStructure(ctx: CanvasRenderingContext2D, poi: StructPoi, t: number) {
+  const { x, y } = poi
+  const hostile = poi.state === 'hostile'
+  const cleared = poi.state === 'cleared'
+  const blink = Math.sin(t * 3) > 0
+  const S = poi.seed
+
+  if (poi.dungeon && poi.fp) {
+    const fp = poi.fp
+    const fx = fp.x, fy = fp.y, fw = fp.w, fh = fp.h
+    const isFactory = poi.type === 'factory'
+    const isCrash = poi.type === 'crash'
+    const roof = isFactory ? '#3d4550' : isCrash ? '#4a4438' : '#414b58'
+    const roofL = isFactory ? '#5a6470' : isCrash ? '#6e6450' : '#5e6e7e'
+    const wall = isFactory ? '#333a44' : isCrash ? '#3e382c' : '#39424e'
+    const wallD = '#242b34'
+    block3d(ctx, fx, fy, fw, fh, WALL_H, roof, roofL, wall, wallD)
+
+    // --- детали крыши (детерминированные) ---
+    const n = 6
+    for (let i = 0; i < n; i++) {
+      const rx = fx + 24 + shash(i, S) * (fw - 60)
+      const ry = fy - WALL_H + 20 + shash(i + 99, S) * (fh - 70)
+      const kind = Math.floor(shash(i + 7, S) * 3)
+      if (kind === 0) { // вентблок
+        px(ctx, rx, ry, 22, 16, '#333c47')
+        px(ctx, rx, ry, 22, 3, '#4a5560')
+        for (let k = 0; k < 3; k++) px(ctx, rx + 3, ry + 5 + k * 4, 16, 1, '#242b34')
+      } else if (kind === 1) { // световой люк
+        px(ctx, rx, ry, 18, 12, '#1b2b3a')
+        px(ctx, rx + 2, ry + 2, 14, 8, blink && !cleared ? 'rgba(255,213,74,0.5)' : '#16222e')
+        px(ctx, rx + 8, ry, 2, 12, '#39424e')
+      } else { // трубы
+        px(ctx, rx, ry, 8, 26, '#4a5560')
+        px(ctx, rx - 2, ry - 3, 12, 4, '#5e6e7e')
+        if (!cleared && blink && isFactory) { ctx.fillStyle = 'rgba(140,150,163,0.35)'; ctx.beginPath(); ctx.arc(rx + 4, ry - 8 - ((t * 8 + i * 5) % 14), 3.4, 0, Math.PI * 2); ctx.fill() }
+      }
+    }
+    // антенна/вышка
+    const ax = fx + fw * 0.82, ay = fy - WALL_H + 14
+    px(ctx, ax, ay - 26, 3, 26, '#5e6e7e')
+    px(ctx, ax - 5, ay - 26, 13, 2, '#5e6e7e')
+    px(ctx, ax - 1, ay - 30, 5, 4, hostile && blink ? '#ff5533' : cleared ? '#7dff5e' : '#3fe0ff')
+    if (hostile && blink) { ctx.fillStyle = 'rgba(255,85,51,0.25)'; ctx.beginPath(); ctx.arc(ax + 1.5, ay - 28, 8, 0, Math.PI * 2); ctx.fill() }
+    // посадочная площадка / энерголинии
+    if (isFactory) {
+      px(ctx, fx + 30, fy - WALL_H + fh - 70, 60, 40, '#333c47')
+      ctx.strokeStyle = '#f5a623'; ctx.lineWidth = 2
+      ctx.strokeRect(fx + 36, fy - WALL_H + fh - 64, 48, 28)
+      px(ctx, fx + 56, fy - WALL_H + fh - 54, 8, 8, '#f5a623')
+    }
+    if (isCrash) {
+      // пробоина и дым
+      ctx.fillStyle = '#1c1812'
+      ctx.beginPath(); ctx.ellipse(fx + fw * 0.3, fy - WALL_H + fh * 0.4, 34, 20, 0.3, 0, Math.PI * 2); ctx.fill()
+      ctx.fillStyle = 'rgba(110,100,80,0.3)'
+      ctx.beginPath(); ctx.arc(fx + fw * 0.3, fy - WALL_H + fh * 0.4 - ((t * 10) % 20), 8, 0, Math.PI * 2); ctx.fill()
+    }
+
+    // --- южный фасад: дверь + окна ---
+    const doorX = poi.doorWorld ? poi.doorWorld.x : fx + fw / 2
+    // гермодверь (вход)
+    px(ctx, doorX - 14, fy + fh - WALL_H + 4, 28, WALL_H - 4, '#222831')
+    px(ctx, doorX - 14, fy + fh - WALL_H + 4, 28, 3, '#4a5560')
+    px(ctx, doorX - 10, fy + fh - WALL_H + 8, 20, WALL_H - 10, '#0f141b')
+    px(ctx, doorX - 1, fy + fh - WALL_H + 10, 2, WALL_H - 14, '#3fe0ff')
+    px(ctx, doorX - 14, fy + fh - WALL_H + 1, 28, 2, hostile ? '#ff5533' : '#f5a623')
+    // окна фасада
+    const wn = Math.floor(fw / 70)
+    for (let i = 0; i < wn; i++) {
+      const wxp = fx + 20 + i * 70
+      if (Math.abs(wxp - doorX) < 40) continue
+      px(ctx, wxp, fy + fh - WALL_H + 8, 26, 10, '#1b2b3a')
+      px(ctx, wxp + 2, fy + fh - WALL_H + 10, 22, 6, blink && !cleared && shash(i + 31, S) > 0.5 ? 'rgba(255,213,74,0.5)' : '#16222e')
+      px(ctx, wxp + 12, fy + fh - WALL_H + 8, 2, 10, '#39424e')
+    }
+    // отметка состояния
+    if (cleared) { px(ctx, doorX - 5, fy + fh - WALL_H - 8, 10, 6, '#3f6e33'); px(ctx, doorX - 3, fy + fh - WALL_H - 6, 6, 2, '#7dff5e') }
+    return
+  }
+
+  // --- малые структуры (без интерьера) ---
+  if (poi.type === 'settlement' || poi.type === 'outpost') {
+    const c1 = poi.type === 'settlement' ? '#5e6e7e' : '#4a6e5e'
+    const band = poi.type === 'settlement' ? '#f5a623' : '#7dff5e'
+    shadow(ctx, x, y + 18, 36, 8)
+    for (const [dx, r] of [[-20, 11], [4, 14], [24, 9]] as [number, number][]) {
+      for (let i = -r; i <= r; i++) {
+        const hh = Math.sqrt(r * r - i * i)
+        px(ctx, x + dx + i, y + 8 - hh * 0.8, 1, hh * 0.8 + 8, c1)
+      }
+      px(ctx, x + dx - r + 2, y + 2, r * 2 - 4, 2, 'rgba(255,255,255,0.12)')
+    }
+    px(ctx, x + 1, y - 8, 3, 3, blink && !cleared ? band : '#39424e')
+    px(ctx, x - 32, y + 15, 64, 2, '#2c3540')
+    for (let i = 0; i < 3; i++) px(ctx, x - 8 + i * 5, y + 8, 2, 3, blink && i === 1 ? '#ffd54a' : '#1b2b3a')
+    if (poi.type === 'outpost') { px(ctx, x - 28, y - 14, 2, 28, '#8a96a3'); px(ctx, x - 28, y - 14, 11, 6, band) }
+  } else if (poi.type === 'camp') {
+    shadow(ctx, x, y + 12, 28, 6)
+    for (const [dx, dy, w2] of [[-18, -4, 15], [2, 2, 17], [-6, -13, 11]] as [number, number, number][]) {
+      ctx.fillStyle = '#6e5a3c'
+      ctx.beginPath()
+      ctx.moveTo(x + dx, y + dy + 10); ctx.lineTo(x + dx + w2 / 2, y + dy - 5); ctx.lineTo(x + dx + w2, y + dy + 10)
+      ctx.closePath(); ctx.fill()
+      px(ctx, x + dx + w2 / 2 - 1, y + dy - 5, 2, 2, '#39424e')
+    }
+    px(ctx, x + 11, y + 4, 6, 2, '#39424e')
+    if (!cleared) {
+      const fh2 = 3 + Math.sin(t * 14) * 1.5
+      px(ctx, x + 13, y + 1 - fh2, 2, fh2, '#ff8a3d'); px(ctx, x + 12, y - fh2, 1, 2, '#ffd54a')
+    }
+    if (hostile && blink) { px(ctx, x - 24, y - 19, 3, 3, '#ff5533'); px(ctx, x - 23, y - 16, 1, 6, '#5e444a') }
+    if (cleared) { px(ctx, x - 4, y - 15, 8, 6, '#3f6e33'); px(ctx, x - 2, y - 13, 4, 2, '#7dff5e') }
+  } else {
+    // реле-станция
+    shadow(ctx, x, y + 8, 11, 3)
+    px(ctx, x - 9, y + 2, 18, 6, '#39424e')
+    px(ctx, x - 1, y - 28, 2, 30, '#8a96a3')
+    for (let i = 0; i < 3; i++) px(ctx, x - 4 + i * 2, y - 26 + i * 2, 8 - i * 4, 1, '#5e6e7e')
+    const on = Math.sin(t * 4) > 0
+    px(ctx, x - 2, y - 32, 4, 4, on ? '#3fe0ff' : '#1b4a5e')
+    if (on) { ctx.fillStyle = 'rgba(63,224,255,0.25)'; ctx.beginPath(); ctx.arc(x, y - 30, 8, 0, Math.PI * 2); ctx.fill() }
+    px(ctx, x - 7, y + 4, 3, 2, '#ffd54a')
+  }
+}
+
+/** Пульсирующий маркер входа у двери */
+export function drawDoorMarker(ctx: CanvasRenderingContext2D, poi: StructPoi, t: number) {
+  if (!poi.doorWorld) return
+  const dx = poi.doorWorld.x, dy = poi.doorWorld.y
+  const k = 0.5 + Math.sin(t * 5) * 0.5
+  ctx.strokeStyle = `rgba(125,255,234,${0.35 + k * 0.5})`
+  ctx.lineWidth = 1.5
+  ctx.beginPath(); ctx.ellipse(dx, dy + 2, 12 + k * 3, 5 + k, 0, 0, Math.PI * 2); ctx.stroke()
+  px(ctx, dx - 1, dy - 26 - k * 3, 2, 6, '#7dffea')
+  ctx.beginPath()
+  ctx.moveTo(dx - 4, dy - 20 - k * 3); ctx.lineTo(dx + 4, dy - 20 - k * 3); ctx.lineTo(dx, dy - 14 - k * 3)
+  ctx.closePath()
+  ctx.fillStyle = `rgba(125,255,234,${0.5 + k * 0.5})`
+  ctx.fill()
+  ctx.font = '6px "Press Start 2P", monospace'
+  ctx.textAlign = 'center'
+  ctx.fillStyle = 'rgba(0,0,0,0.7)'
+  ctx.fillText('[E] ВОЙТИ', dx + 1, dy - 33)
+  ctx.fillStyle = '#7dffea'
+  ctx.fillText('[E] ВОЙТИ', dx, dy - 34)
+}
+
+/** Тёмный фон интерьера (внешний мир не просвечивает) */
+export function drawDungeonBackdrop(ctx: CanvasRenderingContext2D, poi: { dungeon?: { ox: number; oy: number; cols: number; rows: number } }, ox: number, oy: number, W: number, H: number) {
+  ctx.fillStyle = '#05070c'
+  ctx.fillRect(ox, oy, W, H)
+  const d = poi.dungeon
+  if (!d) return
+  // мягкое внешнее свечение вокруг комплекса
+  const g = ctx.createRadialGradient(d.ox + (d.cols * 16) / 2, d.oy + (d.rows * 16) / 2, 60, d.ox + (d.cols * 16) / 2, d.oy + (d.rows * 16) / 2, (d.cols * 16) / 1.4)
+  g.addColorStop(0, 'rgba(20,28,40,0.9)')
+  g.addColorStop(1, 'rgba(5,7,12,1)')
+  ctx.fillStyle = g
+  ctx.fillRect(ox, oy, W, H)
+}
+
+// ============================================================
 // ТАЙЛЫ ДАНЖА (зависят от зоны) + ДЕКОРАЦИИ С ИСТОРИЕЙ МЕСТА
 // ============================================================
 const FLOOR_BY: Record<string, string> = {
@@ -765,6 +959,18 @@ export function drawDungeonTile(ctx: CanvasRenderingContext2D, wx: number, wy: n
       ctx.fillStyle = `rgba(255,85,51,0.12)`
       ctx.beginPath(); ctx.arc(wx + 8, wy + 8, 10, 0, Math.PI * 2); ctx.fill()
     }
+  } else if (tile === 6) {
+    // входной/выходной шлюз
+    px(ctx, wx, wy, 16, 16, '#2a3340')
+    px(ctx, wx, wy, 16, 3, '#4a5a6e')
+    px(ctx, wx, wy, 2, 16, '#4a5a6e'); px(ctx, wx + 14, wy, 2, 16, '#4a5a6e')
+    const open = Math.sin(t * 3) > -0.4
+    px(ctx, wx + 3, wy + 3, 10, 13, open ? '#101820' : '#39424e')
+    if (open) {
+      px(ctx, wx + 7, wy + 5, 2, 9, 'rgba(63,224,255,0.5)')
+      px(ctx, wx + 4, wy + 14, 8, 1, '#3fe0ff')
+    }
+    px(ctx, wx + 6, wy + 1, 4, 1, Math.sin(t * 4) > 0 ? '#7dff5e' : '#2b4a2b')
   }
 }
 

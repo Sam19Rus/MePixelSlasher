@@ -10,7 +10,7 @@ import { audio } from './audio'
 import * as SP from './sprites'
 import { makeStreams, type RngStreams } from './rng'
 import { getRegion, REGIONS, type RegionDef } from './regions'
-import { CELL, TILE, POI_DEFS, poiForCell, makeStarterDungeon, dungeonTileAt, setDungeonTile, inDungeonBounds, roomAt, type Poi, type DungeonLayout } from './structures'
+import { CELL, TILE, WALL_M, POI_DEFS, poiForCell, makeStarterDungeon, dungeonTileAt, setDungeonTile, inDungeonBounds, roomAt, type Poi, type DungeonLayout } from './structures'
 import { BOSSES, makeBoss, drawBoss, type BossState } from './bosses'
 import { Director } from './director'
 import { metaApi, artifactBonuses, PERMANENT_POOL } from './meta'
@@ -104,6 +104,12 @@ export class Engine {
   shuttle: { t: number; released: boolean } | null = null
   shuttleWarned = false
 
+  // сцена: мир / интерьер структуры + переход между ними
+  scene: 'world' | 'dungeon' = 'world'
+  trans: { t: number; dir: 1 | -1; cb: (() => void) | null } | null = null
+  doorPoi: Poi | null = null
+  exitReady = false
+
   pois = new Map<string, Poi | null>()
   activatedPois = new Set<string>()
   touchedRelays = new Set<string>()
@@ -189,7 +195,11 @@ export class Engine {
       if (e.code === 'Tab') { e.preventDefault(); if (!this.paused) this.overlay = this.overlay === 'inventory' ? null : 'inventory'; return }
       if (e.code === 'KeyR') this.startReload()
       if (e.code === 'KeyM') { audio.toggleMute(); metaApi.state.settings.muted = audio.muted; metaApi.persist() }
-      if (e.code === 'KeyE') this.tryOpenPod()
+      if (e.code === 'KeyE') {
+        if (this.scene === 'dungeon' && this.exitReady) this.exitDungeon()
+        else if (this.scene === 'world' && this.doorPoi) this.enterDungeon(this.doorPoi)
+        else this.tryOpenPod()
+      }
       if (/^Digit[1-5]$/.test(e.code)) this.switchTo(+e.code.slice(5) - 1)
     }) as EventListener)
     on(window, 'keyup', ((e: KeyboardEvent) => { this.keys[e.code] = false }) as EventListener)
@@ -481,7 +491,11 @@ export class Engine {
   /** Движение сущности: на поверхности — pushOut, в данже — скольжение вдоль стен */
   moveEnt(e: { x: number; y: number }, mx: number, my: number, r: number) {
     if (!this.activeDungeonPoi) {
-      e.x += mx; e.y += my
+      // внешний мир: стены структур непроходимы (кроме дверного проёма)
+      const nx = e.x + mx
+      if (!this.structureBlocked(nx, e.y, r)) e.x = nx
+      const ny = e.y + my
+      if (!this.structureBlocked(e.x, ny, r)) e.y = ny
       this.pushOut(e, r)
       return
     }
@@ -578,6 +592,7 @@ export class Engine {
         this.updatePois(dt)
         if (this.spawnAnim < 1) this.spawnAnim = Math.min(1, this.spawnAnim + dt * 1.4)
       }
+      this.updateTrans(dt)
       const p = this.p
       this.camX += (p.x - this.camX) * Math.min(1, dt * 8)
       this.camY += (p.y - this.camY) * Math.min(1, dt * 8)
@@ -611,7 +626,84 @@ export class Engine {
     const p = this.p
     for (const poi of this.pois.values()) {
       if (!poi || poi.state !== 'hostile') continue
-      if (Math.hypot(poi.x - p.x, poi.y - p.y) < POI_DEFS[poi.type].radius + 60) return true
+      if (poi.dungeon) {
+        const fp = poi.fp
+        const ddx = Math.max(fp.x - p.x, 0, p.x - (fp.x + fp.w))
+        const ddy = Math.max(fp.y - p.y, 0, p.y - (fp.y + fp.h))
+        if (Math.hypot(ddx, ddy) < 130) return true
+      } else if (Math.hypot(poi.x - p.x, poi.y - p.y) < POI_DEFS[poi.type].radius + 60) return true
+    }
+    return false
+  }
+
+  // ============================================================
+  // СЦЕНЫ: ВХОД / ВЫХОД ИЗ СТРУКТУР
+  // ============================================================
+  startTrans(cb: () => void) {
+    this.trans = { t: 0, dir: 1, cb }
+    audio.zoneBlip()
+  }
+  updateTrans(dt: number) {
+    const tr = this.trans
+    if (!tr) return
+    tr.t += tr.dir * dt * 3.2
+    if (tr.dir === 1 && tr.t >= 1) { tr.t = 1; if (tr.cb) { tr.cb(); tr.cb = null }; tr.dir = -1 }
+    else if (tr.dir === -1 && tr.t <= 0) this.trans = null
+  }
+
+  applyEnter(poi: Poi) {
+    this.scene = 'dungeon'
+    this.activeDungeonPoi = poi
+    this.enemies = []
+    const d = poi.dungeon!
+    this.p.x = d.ox + d.entry.x
+    this.p.y = d.oy + d.entry.y
+    this.camX = this.p.x; this.camY = this.p.y
+    if (!poi.ds!.spawned) {
+      poi.ds!.spawned = true
+      for (const s of d.spawns) this.spawnEnemy(d.ox + s.x, d.oy + s.y, undefined, this.region.tier * (1 + s.tier * 0.25))
+      for (const c of d.containers) this.capsules.push(this.makeCapsule(d.ox + c.x, d.oy + c.y, clamp(c.tier - 1, 0, 3), false))
+      this.capsules.push(this.makeCapsule(d.ox + d.secretCache.x, d.oy + d.secretCache.y, clamp(d.secretCache.tier - 1, 0, 3), false))
+    }
+    for (const c of this.companions) { c.x = this.p.x + (rnd() - 0.5) * 30; c.y = this.p.y + (rnd() - 0.5) * 30 }
+    this.hooks.onToast({ text: `ВНУТРИ: ${POI_DEFS[poi.type].label}`, color: '#3fe0ff' })
+    audio.doorOpen()
+  }
+  applyExit() {
+    const poi = this.activeDungeonPoi
+    if (!poi) return
+    this.scene = 'world'
+    this.p.x = poi.doorWorld.x
+    this.p.y = poi.doorWorld.y + 4
+    this.camX = this.p.x; this.camY = this.p.y
+    this.activeDungeonPoi = null
+    this.enemies = []
+    for (const c of this.companions) { c.x = this.p.x + (rnd() - 0.5) * 30; c.y = this.p.y + (rnd() - 0.5) * 30 }
+    this.hooks.onToast({ text: 'ВЫХОД НА ПОВЕРХНОСТЬ', color: '#9aa7b8' })
+  }
+
+  /** Игрок у внешней двери — войти в интерьер */
+  enterDungeon(poi: Poi) {
+    if (!poi.dungeon || !poi.ds) return
+    this.startTrans(() => this.applyEnter(poi))
+  }
+  /** Игрок у внутренней двери — выйти наружу */
+  exitDungeon() {
+    if (!this.activeDungeonPoi) return
+    this.startTrans(() => this.applyExit())
+  }
+
+  /** Блокируют ли внешние стены структур движение (кроме дверного проёма) */
+  structureBlocked(x: number, y: number, r: number): boolean {
+    if (this.scene !== 'world') return false
+    for (const poi of this.pois.values()) {
+      if (!poi || !poi.dungeon) continue
+      const fp = poi.fp
+      if (x + r < fp.x || x - r > fp.x + fp.w || y + r < fp.y || y - r > fp.y + fp.h) continue
+      // внутри footprint — блокируем, кроме дверного проёма снизу
+      const doorHalf = 12
+      if (y > fp.y + fp.h - WALL_M - r && Math.abs(x - poi.doorWorld.x) < doorHalf) continue
+      return true
     }
     return false
   }
@@ -636,55 +728,46 @@ export class Engine {
         }
       }
     }
-    let inside: Poi | null = null
-    for (const poi of this.pois.values()) {
-      if (!poi) continue
-      if (poi.dungeon && inDungeonBounds(poi.dungeon, p.x, p.y)) { inside = poi; break }
-      if (poi.state === 'hostile' && !this.activatedPois.has(poi.id)) {
-        if (Math.hypot(poi.x - p.x, poi.y - p.y) < POI_DEFS[poi.type].radius) {
-          this.activatedPois.add(poi.id)
-          this.hooks.onToast({ text: `${POI_DEFS[poi.type].label}: ПРОТИВНИК ЗАМЕТИЛ ВАС`, color: '#ff5533' })
-          audio.alarm()
-          for (let i = 0; i < poi.guards; i++) {
-            const a = rnd() * Math.PI * 2
-            this.spawnEnemy(poi.x + Math.cos(a) * 40, poi.y + Math.sin(a) * 40, undefined, this.region.tier * 1.1, poi.id)
+    // --- мир: двери структур (промпт входа) + враждебные POI + реле ---
+    this.doorPoi = null
+    this.exitReady = false
+    if (this.scene === 'world') {
+      for (const poi of this.pois.values()) {
+        if (!poi) continue
+        if (poi.dungeon && Math.hypot(poi.doorWorld.x - p.x, poi.doorWorld.y - p.y) < 26) this.doorPoi = poi
+        if (poi.state === 'hostile' && !this.activatedPois.has(poi.id)) {
+          let near: boolean
+          if (poi.dungeon) {
+            const fp = poi.fp
+            const ddx = Math.max(fp.x - p.x, 0, p.x - (fp.x + fp.w))
+            const ddy = Math.max(fp.y - p.y, 0, p.y - (fp.y + fp.h))
+            near = Math.hypot(ddx, ddy) < 70
+          } else near = Math.hypot(poi.x - p.x, poi.y - p.y) < POI_DEFS[poi.type].radius
+          if (near) {
+            this.activatedPois.add(poi.id)
+            this.hooks.onToast({ text: `${POI_DEFS[poi.type].label}: ПРОТИВНИК ЗАМЕТИЛ ВАС`, color: '#ff5533' })
+            audio.alarm()
+            for (let i = 0; i < poi.guards; i++) {
+              const a = rnd() * Math.PI * 2
+              this.spawnEnemy(poi.x + Math.cos(a) * 40, poi.y + Math.sin(a) * 40, undefined, this.region.tier * 1.1, poi.id)
+            }
+          }
+        }
+        if (poi.type === 'relay' && poi.state === 'neutral' && !this.touchedRelays.has(poi.id)) {
+          if (Math.hypot(poi.x - p.x, poi.y - p.y) < 26) {
+            this.touchedRelays.add(poi.id)
+            const cr = irand(25, 60)
+            p.credits += cr
+            audio.coin()
+            this.floaters.push({ x: p.x, y: p.y - 18, text: `+${cr} ДАННЫЕ`, color: '#3fe0ff', life: 1, size: 6 })
+            this.hooks.onToast({ text: 'РЕЛЕ: КООРДИНАТЫ ПЕРЕДАНЫ ГИЛЬДИИ', color: '#3fe0ff' })
           }
         }
       }
-      if (poi.type === 'relay' && poi.state === 'neutral' && !this.touchedRelays.has(poi.id)) {
-        if (Math.hypot(poi.x - p.x, poi.y - p.y) < 26) {
-          this.touchedRelays.add(poi.id)
-          const cr = irand(25, 60)
-          p.credits += cr
-          audio.coin()
-          this.floaters.push({ x: p.x, y: p.y - 18, text: `+${cr} ДАННЫЕ`, color: '#3fe0ff', life: 1, size: 6 })
-          this.hooks.onToast({ text: 'РЕЛЕ: КООРДИНАТЫ ПЕРЕДАНЫ ГИЛЬДИИ', color: '#3fe0ff' })
-        }
-      }
-    }
-    if (inside !== this.activeDungeonPoi) {
-      this.activeDungeonPoi = inside
-      if (inside && inside.dungeon) {
-        // поверхностные враги не сопровождают игрока внутрь комплекса
-        const d = inside.dungeon
-        const m = 24
-        for (let i = this.enemies.length - 1; i >= 0; i--) {
-          const e = this.enemies[i]
-          if (e.x > d.ox - m && e.x < d.ox + d.cols * TILE + m && e.y > d.oy - m && e.y < d.oy + d.rows * TILE + m) {
-            this.enemies.splice(i, 1)
-          }
-        }
-        this.bullets = this.bullets.filter((b) => b.friendly)
-      }
-      if (inside && inside.dungeon && inside.ds && !inside.ds.spawned) {
-        inside.ds.spawned = true
-        const d = inside.dungeon
-        for (const s of d.spawns) this.spawnEnemy(d.ox + s.x, d.oy + s.y, undefined, this.region.tier * (1 + s.tier * 0.25))
-        for (const c of d.containers) this.capsules.push(this.makeCapsule(d.ox + c.x, d.oy + c.y, clamp(c.tier - 1, 0, 3), false))
-        this.capsules.push(this.makeCapsule(d.ox + d.secretCache.x, d.oy + d.secretCache.y, clamp(d.secretCache.tier - 1, 0, 3), false))
-        this.hooks.onToast({ text: `ВНУТРИ: ${POI_DEFS[inside.type].label}`, color: '#3fe0ff' })
-        audio.zoneBlip()
-      }
+    } else if (this.activeDungeonPoi?.dungeon) {
+      // --- интерьер: промпт выхода у входного шлюза ---
+      const d = this.activeDungeonPoi.dungeon
+      if (Math.hypot(d.ox + d.entry.x - p.x, d.oy + d.entry.y - p.y) < 28) this.exitReady = true
     }
     const dp = this.activeDungeonPoi
     if (dp && dp.dungeon && dp.ds) {
@@ -737,8 +820,21 @@ export class Engine {
   spawnEnemy(x?: number, y?: number, forceType?: string, tier = 1, poiId?: string) {
     if (this.enemies.length > 60) return
     const p = this.p
-    const ex = x ?? p.x + (rnd() < 0.5 ? -1 : 1) * (150 + rnd() * 90)
-    const ey = y ?? p.y + (rnd() - 0.5) * 220
+    let ex = x ?? p.x + (rnd() < 0.5 ? -1 : 1) * (150 + rnd() * 90)
+    let ey = y ?? p.y + (rnd() - 0.5) * 220
+    // не спавнить внутри непроходимых структур
+    if (this.scene === 'world') {
+      for (const poi of this.pois.values()) {
+        if (!poi || !poi.dungeon) continue
+        const fp = poi.fp
+        if (ex > fp.x - 8 && ex < fp.x + fp.w + 8 && ey > fp.y - 8 && ey < fp.y + fp.h + 8) {
+          const a = rnd() * Math.PI * 2
+          const R = Math.max(fp.w, fp.h) / 2 + 40
+          ex = poi.x + Math.cos(a) * R
+          ey = poi.y + Math.sin(a) * R * 0.7
+        }
+      }
+    }
     let type = forceType
     if (!type) {
       const w = this.region.enemies
@@ -1656,7 +1752,7 @@ export class Engine {
       }
       case 'dungeon': {
         const s = this.pois.get('starter')
-        if (s && s.dungeon) { p.x = s.dungeon.ox + s.dungeon.hpx; p.y = s.dungeon.oy + s.dungeon.hpy + 10 }
+        if (s && s.dungeon && s.ds) this.applyEnter(s)
         break
       }
       case 'boss': this.boss = makeBoss(BOSSES.warden, p.x + 90, p.y); audio.bossRoar(); break
@@ -1734,36 +1830,45 @@ export class Engine {
     const ox = Math.round(this.camX - W / 2 + shx), oy = Math.round(this.camY - H / 2 + shy)
     ctx.save()
     ctx.translate(-ox, -oy)
-    const cx0 = Math.floor(ox / CHUNK), cx1 = Math.floor((ox + W) / CHUNK)
-    const cy0 = Math.floor(oy / CHUNK), cy1 = Math.floor((oy + H) / CHUNK)
-    for (let cy = cy0; cy <= cy1; cy++) for (let cx = cx0; cx <= cx1; cx++) ctx.drawImage(this.getChunk(cx, cy), cx * CHUNK, cy * CHUNK)
-    ctx.fillStyle = BIOMES[this.biomeAt(this.camX, this.camY)].fog
-    ctx.fillRect(ox, oy, W, H)
-
     const t = this.menuT
-    for (const poi of this.pois.values()) {
-      if (!poi) continue
-      if (poi.x < ox - 160 || poi.x > ox + W + 160 || poi.y < oy - 160 || poi.y > oy + H + 160) continue
-      SP.drawPoi(ctx, poi, t)
-      const pd = Math.hypot(poi.x - this.p.x, poi.y - this.p.y)
-      if (pd < 150) {
-        ctx.font = '6px "Press Start 2P", monospace'
-        ctx.textAlign = 'center'
-        ctx.fillStyle = 'rgba(0,0,0,0.7)'
-        ctx.fillText(POI_DEFS[poi.type].label, poi.x + 1, poi.y - 25)
-        ctx.fillStyle = poi.state === 'hostile' ? '#ff8a7a' : poi.state === 'cleared' ? '#7dff5e' : '#baf3ff'
-        ctx.fillText(POI_DEFS[poi.type].label, poi.x, poi.y - 26)
+    type D = { y: number; f: () => void }
+    const ds: D[] = []
+    const inDungeon = this.scene === 'dungeon' && !!this.activeDungeonPoi
+    if (!inDungeon) {
+      // ---------- ВНЕШНИЙ МИР ----------
+      const cx0 = Math.floor(ox / CHUNK), cx1 = Math.floor((ox + W) / CHUNK)
+      const cy0 = Math.floor(oy / CHUNK), cy1 = Math.floor((oy + H) / CHUNK)
+      for (let cy = cy0; cy <= cy1; cy++) for (let cx = cx0; cx <= cx1; cx++) ctx.drawImage(this.getChunk(cx, cy), cx * CHUNK, cy * CHUNK)
+      ctx.fillStyle = BIOMES[this.biomeAt(this.camX, this.camY)].fog
+      ctx.fillRect(ox, oy, W, H)
+      // структуры — в y-сортировке (корректная окклюзия: крыша скрывает тех, кто за зданием)
+      for (const poi of this.pois.values()) {
+        if (!poi) continue
+        if (poi.x < ox - 400 || poi.x > ox + W + 400 || poi.y < oy - 400 || poi.y > oy + H + 400) continue
+        const baseY = poi.dungeon ? poi.fp.y + poi.fp.h : poi.y + 18
+        ds.push({
+          y: baseY, f: () => {
+            SP.drawStructure(ctx, poi, t)
+            const pd = Math.hypot(poi.x - this.p.x, poi.y - this.p.y)
+            if (pd < 260) {
+              const ly = poi.y - (poi.dungeon ? poi.fp.h / 2 + 16 : 34)
+              ctx.font = '6px "Press Start 2P", monospace'
+              ctx.textAlign = 'center'
+              ctx.fillStyle = 'rgba(0,0,0,0.7)'
+              ctx.fillText(POI_DEFS[poi.type].label, poi.x + 1, ly + 1)
+              ctx.fillStyle = poi.state === 'hostile' ? '#ff8a7a' : poi.state === 'cleared' ? '#7dff5e' : '#baf3ff'
+              ctx.fillText(POI_DEFS[poi.type].label, poi.x, ly)
+            }
+          },
+        })
       }
-    }
-
-    const dp = this.activeDungeonPoi
-    if (dp && dp.dungeon) {
+    } else {
+      // ---------- ИНТЕРЬЕР: отдельная сцена ----------
+      const dp = this.activeDungeonPoi!
+      SP.drawDungeonBackdrop(ctx, dp, ox, oy, W, H)
       this.drawDungeonTiles(ctx, dp, ox, oy, W, H, t)
       SP.drawDungeonDecor(ctx, dp, t)
     }
-
-    type D = { y: number; f: () => void }
-    const ds: D[] = []
     for (const c of this.capsules) if (c.x > ox - 40 && c.x < ox + W + 40 && c.y > oy - 40 && c.y < oy + H + 40) ds.push({ y: c.y, f: () => SP.drawCapsule(ctx, { ...c, body: CAPSULE_COLORS[c.cIdx].body, band: CAPSULE_COLORS[c.cIdx].band }, t) })
     for (const pod of this.pods) ds.push({ y: pod.y, f: () => SP.drawGuildPod(ctx, pod, t) })
     for (const pk of this.pickups) ds.push({
@@ -1803,6 +1908,24 @@ export class Engine {
     if (this.boss) ds.push({ y: this.boss.y, f: () => drawBoss(ctx, this.boss!, t) })
     ds.sort((a, b) => a.y - b.y)
     for (const d of ds) d.f()
+
+    // подсказки входа/выхода — поверх всего
+    if (!inDungeon) {
+      if (this.doorPoi) SP.drawDoorMarker(ctx, this.doorPoi, t)
+    } else if (this.exitReady) {
+      const d = this.activeDungeonPoi!.dungeon!
+      const ex = d.ox + d.entry.x, ey = d.oy + d.entry.y
+      const k = 0.5 + Math.sin(t * 5) * 0.5
+      ctx.strokeStyle = `rgba(255,213,74,${0.4 + k * 0.5})`
+      ctx.lineWidth = 1.5
+      ctx.beginPath(); ctx.ellipse(ex, ey + 4, 14 + k * 3, 6, 0, 0, Math.PI * 2); ctx.stroke()
+      ctx.font = '6px "Press Start 2P", monospace'
+      ctx.textAlign = 'center'
+      ctx.fillStyle = 'rgba(0,0,0,0.7)'
+      ctx.fillText('[E] ВЫЙТИ', ex + 1, ey - 20)
+      ctx.fillStyle = '#ffd54a'
+      ctx.fillText('[E] ВЫЙТИ', ex, ey - 21)
+    }
 
     for (const f of this.fallPods) SP.drawFallingPod(ctx, f.x, f.y, 1 - f.t / f.dur, t)
     for (const b of this.bullets) SP.drawBullet(ctx, b, t)
@@ -1858,6 +1981,18 @@ export class Engine {
     if (this.hurtT > 0) { ctx.fillStyle = `rgba(255,40,20,${this.hurtT * 0.5})`; ctx.fillRect(0, 0, W, H) }
     if (!this.dead && p.hp < p.maxHp * 0.3) { ctx.fillStyle = `rgba(255,40,20,${0.08 + Math.sin(t * 6) * 0.06})`; ctx.fillRect(0, 0, W, H) }
 
+    // переход между миром и интерьером (кольцевая диафрагма)
+    if (this.trans) {
+      const a = Math.min(1, this.trans.t)
+      ctx.fillStyle = `rgba(3,6,12,${a})`
+      ctx.fillRect(0, 0, W, H)
+      if (a > 0.3) {
+        ctx.strokeStyle = `rgba(63,224,255,${(1 - a) * 0.6})`
+        ctx.lineWidth = 2
+        ctx.beginPath(); ctx.arc(W / 2, H / 2, (1 - a) * 160 + 8, 0, Math.PI * 2); ctx.stroke()
+      }
+    }
+
     this.miniT -= 1 / 60
     if (this.miniT <= 0) { this.miniT = 0.1; this.drawMinimap() }
   }
@@ -1872,7 +2007,7 @@ export class Engine {
     for (let ty = ty0; ty <= ty1; ty++) for (let tx = tx0; tx <= tx1; tx++) {
       const tile = d.tiles[ty * d.cols + tx]
       const wx = d.ox + tx * TILE, wy = d.oy + ty * TILE
-      const room = roomAt(d, tx, ty)
+      const room = roomAt(d, wx, wy)
       const extra: { on?: boolean; room?: string | null; v?: number } = { room: room ? room.kind : null, v: hash2(tx * 7, ty * 13, this.seed) }
       if (tile === 2) extra.on = d.door.open
       else if (tile === 3) {
@@ -1912,15 +2047,15 @@ export class Engine {
     for (let i = 0; i < d.lamps.length; i++) {
       const l = d.lamps[i]
       const flick = 0.55 + Math.sin(t * (3 + (i % 4)) + i * 2) * 0.18
-      hole(l.x - d.ox, l.y - d.oy, l.r, flick)
+      hole(l.x - d.ox, l.y - d.oy, l.color === '#ff8a3d' ? 90 : 60, flick)
     }
     // рубильники и дверь
     for (const s of d.switches) if (s.on) hole(s.x - d.ox, s.y - d.oy, 20, 0.7)
-    if (d.door.open) hole(d.ox + d.door.x * TILE + 8 - d.ox, d.oy + d.door.y * TILE + 8 - d.oy, 26, 0.6)
-    // входной проём
-    hole(0, 12 * TILE + 16, 30, 0.8)
+    if (d.door.open) hole(d.door.x * TILE + 8, d.door.y * TILE + 8, 26, 0.6)
+    // входной проём (нижний шлюз)
+    hole(d.entry.x, d.rows * TILE - 6, 34, 0.85)
     // ядро босса
-    if (this.boss) hole(this.boss.x - d.ox, this.boss.y - d.oy, 50, 0.85)
+    if (this.boss) hole(this.boss.x - d.ox, this.boss.y - d.oy, 55, 0.85)
     g.globalCompositeOperation = 'source-over'
     ctx.drawImage(this.lightCv, d.ox, d.oy)
     // цветные ореолы ламп (аддитивно)
@@ -1929,7 +2064,7 @@ export class Engine {
     for (let i = 0; i < d.lamps.length; i += 2) {
       const l = d.lamps[i]
       ctx.fillStyle = l.color + '14'
-      ctx.beginPath(); ctx.arc(l.x, l.y, l.r * 0.6, 0, Math.PI * 2); ctx.fill()
+      ctx.beginPath(); ctx.arc(l.x, l.y, 34, 0, Math.PI * 2); ctx.fill()
     }
     ctx.restore()
   }
