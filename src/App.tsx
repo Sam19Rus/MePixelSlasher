@@ -25,6 +25,8 @@ interface Snap {
     companions: { uid: string; name: string; color: string; rarity: number }[]
     deployed: string[]
     stats: { expeditions: number; kills: number; bosses: number; bestKills: number }
+    discoveredSites: string[]
+    clearedCount: number
   }
 }
 
@@ -568,14 +570,17 @@ function MapOverlay({ snap, onLaunch, onClose }: { snap: Snap; onLaunch: (id: st
               {/* зоны высадки выбранного региона */}
               {sites.map((s, i) => {
                 const on = i === site
+                const known = (snap.meta.discoveredSites ?? []).includes(`${r.id}_${i}`)
                 return (
                   <g key={i} onClick={(e) => { e.stopPropagation(); audio.click(); setSite(i) }} style={{ cursor: 'pointer' }}>
-                    <circle cx={s.x} cy={s.y} r={on ? 3.4 : 2.4} fill="none" stroke={on ? '#ffd54a' : '#8fa5ba'} strokeWidth="0.5" opacity={on ? 1 : 0.6}>
+                    <circle cx={s.x} cy={s.y} r={on ? 3.4 : 2.4} fill="none" stroke={on ? '#ffd54a' : known ? '#7dff5e' : '#8fa5ba'} strokeWidth="0.5" opacity={on ? 1 : 0.6}>
                       {on && <animate attributeName="r" values="3;4.2;3" dur="1.2s" repeatCount="indefinite" />}
                     </circle>
-                    <circle cx={s.x} cy={s.y} r="0.9" fill={on ? '#ffd54a' : '#8fa5ba'} />
+                    <circle cx={s.x} cy={s.y} r="0.9" fill={on ? '#ffd54a' : known ? '#7dff5e' : '#8fa5ba'} />
                     {on && <path d={`M${s.x},${s.y - 6.4} l1.6,2.6 h-3.2 Z`} fill="#ffd54a" />}
-                    <text x={s.x} y={s.y + 6.2} textAnchor="middle" fontSize="1.9" fontFamily="'Press Start 2P',monospace" fill={on ? '#ffd54a' : '#7e93a8'}>{s.name}</text>
+                    {/* отметка «уже исследовано» */}
+                    {known && !on && <path d={`M${s.x + 2.6},${s.y - 2.6} l1.4,1.6 l2.4,-3`} fill="none" stroke="#7dff5e" strokeWidth="0.6" />}
+                    <text x={s.x} y={s.y + 6.2} textAnchor="middle" fontSize="1.9" fontFamily="'Press Start 2P',monospace" fill={on ? '#ffd54a' : known ? '#7dff5e' : '#7e93a8'}>{s.name}</text>
                   </g>
                 )
               })}

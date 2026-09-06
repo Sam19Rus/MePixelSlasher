@@ -244,20 +244,32 @@ export function drawShipInterior(ctx: CanvasRenderingContext2D, t: number, activ
     ctx.strokeRect(bx + 1.5, by + 1.5, 17, 15)
     const charging = Math.sin(t * 4 + i * 2) > 0
     px(ctx, bx + 8, by + 15, 4, 2, charging ? '#7dff5e' : '#2b4a2b')
-    // бот на платформе
+    // бот на платформе (второй бот — работает у верстака)
     const bot = bots[i]
     if (bot) {
-      const bby = by + 9 + Math.sin(t * 3 + i) * 1
+      const working = i === 1 && bots.length > 1
+      const wx = working ? 106 : bx + 6
+      const wy = working ? 66 : by + 9
+      const bby = wy + Math.sin(t * 3 + i) * 1
       if (bot.kind === 'drone') {
-        px(ctx, bx + 6, bby - 6, 8, 4, '#5e6e8a')
+        px(ctx, wx, bby - 6, 8, 4, '#5e6e8a')
         ctx.fillStyle = 'rgba(200,220,235,0.5)'
-        ctx.fillRect(bx + 4, bby - 8 + (((t * 20) | 0) % 2), 12, 1)
-        px(ctx, bx + 9, bby - 5, 2, 2, bot.color)
+        ctx.fillRect(wx - 2, bby - 8 + (((t * 20) | 0) % 2), 12, 1)
+        px(ctx, wx + 3, bby - 5, 2, 2, bot.color)
       } else {
-        px(ctx, bx + 6, bby - 4, 8, 7, '#5e6e7e')
-        px(ctx, bx + 6, bby - 7, 8, 3, '#39424e')
-        px(ctx, bx + 8, bby - 6, 4, 1, bot.color)
-        px(ctx, bx + 5, bby + 3, 3, 3, '#39424e'); px(ctx, bx + 12, bby + 3, 3, 3, '#39424e')
+        px(ctx, wx, bby - 4, 8, 7, '#5e6e7e')
+        px(ctx, wx, bby - 7, 8, 3, '#39424e')
+        px(ctx, wx + 2, bby - 6, 4, 1, bot.color)
+        px(ctx, wx - 1, bby + 3, 3, 3, '#39424e'); px(ctx, wx + 6, bby + 3, 3, 3, '#39424e')
+      }
+      // сварка у верстака: периодические искры
+      if (working && Math.sin(t * 2.2) > -0.4) {
+        const sp = ((t * 30) | 0) % 3
+        ctx.fillStyle = '#ffd54a'
+        px(ctx, 122 + sp * 2, 66 - sp, 2, 2, '#ffd54a')
+        px(ctx, 120 - sp, 68 + sp, 1, 1, '#ff8a3d')
+        ctx.fillStyle = 'rgba(255,213,74,0.3)'
+        ctx.beginPath(); ctx.arc(122, 66, 5 + sp, 0, Math.PI * 2); ctx.fill()
       }
     }
   })

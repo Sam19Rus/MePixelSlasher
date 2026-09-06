@@ -6,6 +6,9 @@ export interface MetaState {
   version: number; credits: number; artifacts: PermItem[]; blueprints: string[]
   companions: PermCompanion[]; deployed: string[]; unlocked: string[]
   settings: { muted: boolean }; stats: MetaStats
+  /** §46 WORLD STATE: зачищенные структуры и открытые точки высадки */
+  clearedPois: string[]
+  discoveredSites: string[]
 }
 
 /** Абстрактный порт сохранения — позже заменяется на Yandex Games Cloud save */
@@ -25,7 +28,7 @@ export class LocalSavePort implements SavePort {
 }
 
 function defaultMeta(): MetaState {
-  return { version: 1, credits: 0, artifacts: [], blueprints: [], companions: [], deployed: [], unlocked: [], settings: { muted: false }, stats: { expeditions: 0, kills: 0, bosses: 0, bestKills: 0 } }
+  return { version: 1, credits: 0, artifacts: [], blueprints: [], companions: [], deployed: [], unlocked: [], settings: { muted: false }, stats: { expeditions: 0, kills: 0, bosses: 0, bestKills: 0 }, clearedPois: [], discoveredSites: [] }
 }
 
 let uidC = 0
@@ -34,8 +37,21 @@ const uid = (p: string) => `${p}_${Date.now().toString(36)}_${(uidC++).toString(
 class MetaApi {
   state: MetaState = defaultMeta()
   private port: SavePort = new LocalSavePort()
-  boot(): void { const l = this.port.load(); if (l) this.state = { ...defaultMeta(), ...l } }
+  boot(): void {
+    const l = this.port.load()
+    if (l) this.state = { ...defaultMeta(), ...l, clearedPois: l.clearedPois ?? [], discoveredSites: l.discoveredSites ?? [] }
+  }
   persist(): void { this.port.save(this.state) }
+
+  // ---------- §46 WORLD STATE ----------
+  isClearedPoi(id: string): boolean { return this.state.clearedPois.includes(id) }
+  addClearedPoi(id: string): void {
+    if (!this.state.clearedPois.includes(id)) { this.state.clearedPois.push(id); this.persist() }
+  }
+  isDiscoveredSite(key: string): boolean { return this.state.discoveredSites.includes(key) }
+  addDiscoveredSite(key: string): void {
+    if (!this.state.discoveredSites.includes(key)) { this.state.discoveredSites.push(key); this.persist() }
+  }
   addArtifact(def: Omit<PermItem, 'uid' | 'acquired'>): { item: PermItem | null; converted: number } {
     if (this.state.artifacts.some((a) => a.id === def.id)) {
       const cr = 200 + def.rarity * 150

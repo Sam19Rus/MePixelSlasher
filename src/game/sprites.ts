@@ -234,6 +234,53 @@ export function drawPlayer(ctx: CanvasRenderingContext2D, p: PlayerVisual, t: nu
 // ============================================================
 // ВРАГИ
 // ============================================================
+// §30: компонентные аксессуары врагов — силуэт меняется от экземпляра к экземпляру
+function enemyExtras(ctx: CanvasRenderingContext2D, e: { x: number; y: number; type: string; pal: { main: string; dark: string; accent: string }; phase: number }, yy: number, t: number) {
+  const { x, pal } = e
+  const ph = e.phase
+  if (e.type === 'grunt') {
+    if (ph > 2) { // рюкзак-ящик
+      px(ctx, x + 3, yy - 5, 4, 6, pal.dark)
+      px(ctx, x + 3, yy - 5, 4, 1, 'rgba(255,255,255,0.2)')
+      px(ctx, x + 4, yy - 3, 2, 2, pal.accent)
+    }
+    if (ph > 4) { // наплечники + визор-полоса
+      px(ctx, x - 6, yy - 7, 2, 3, pal.main)
+      px(ctx, x + 4, yy - 7, 2, 3, pal.main)
+      px(ctx, x - 2, yy - 9, 4, 1, pal.accent)
+    }
+  } else if (e.type === 'brute') {
+    if (ph > 1.5) { // заклёпки брони
+      px(ctx, x - 7, yy - 4, 1, 1, '#c9d4de'); px(ctx, x + 6, yy - 4, 1, 1, '#c9d4de')
+      px(ctx, x - 7, yy + 1, 1, 1, '#c9d4de'); px(ctx, x + 6, yy + 1, 1, 1, '#c9d4de')
+    }
+    if (ph > 3) { // генератор на спине + кабель
+      px(ctx, x - 15, yy - 8, 5, 9, '#2c3540')
+      px(ctx, x - 15, yy - 8, 5, 2, '#4a5568')
+      px(ctx, x - 14, yy - 5, 3, 3, Math.sin(t * 8) > 0 ? pal.accent : pal.dark)
+      ctx.strokeStyle = pal.dark; ctx.lineWidth = 1
+      ctx.beginPath(); ctx.moveTo(x - 12, yy - 8); ctx.quadraticCurveTo(x - 8, yy - 15, x - 4, yy - 11); ctx.stroke()
+    }
+  } else if (e.type === 'gunner') {
+    if (ph > 2.5) { // антенна-мачта
+      px(ctx, x + 3, yy - 15, 1, 6, '#8a96a3')
+      px(ctx, x + 2, yy - 16, 3, 2, Math.sin(t * 6 + ph) > 0 ? pal.accent : pal.dark)
+    }
+    if (ph > 4) { // патронная лента наискось
+      for (let i = 0; i < 4; i++) px(ctx, x - 4 + i * 2, yy - 4 + i, 2, 2, pal.accent)
+    }
+  } else if (e.type === 'flyer') {
+    if (ph > 3) { // грузовой крюк
+      px(ctx, x - 1, yy + 6, 2, 3, '#39424e')
+      px(ctx, x - 2, yy + 9, 4, 2, '#5e6e7e')
+    }
+    if (ph > 4.5) { // сенсорный подвес
+      px(ctx, x + 5, yy - 1, 3, 3, pal.dark)
+      px(ctx, x + 6, yy, 1, 1, pal.accent)
+    }
+  }
+}
+
 export function drawEnemy(ctx: CanvasRenderingContext2D, e: { x: number; y: number; type: string; body: number; head: number; weapon: number; pal: { main: string; dark: string; accent: string }; walkT: number; flash: number; windup: number; aim: number; phase: number }, t: number) {
   const { x, y, pal } = e
   const bob = Math.sin(e.walkT * 10)
@@ -252,6 +299,7 @@ export function drawEnemy(ctx: CanvasRenderingContext2D, e: { x: number; y: numb
     if (e.weapon === 0) { for (let i = 0; i < 3; i++) px(ctx, x + 5, yy - 3 - up + i * 2, 2, 1, pal.accent) }
     else if (e.weapon === 1) { px(ctx, x + 4, yy - 4 - up, 2, 6, '#c9d4de'); px(ctx, x + 4, yy - 6 - up, 2, 2, pal.accent) }
     else { px(ctx, x + 4, yy - 2 - up, 5, 2, '#6e5a3a'); px(ctx, x + 8, yy - 3 - up, 2, 3, pal.dark) }
+    enemyExtras(ctx, e, yy, t)
     flashBox(ctx, x - 5, yy - 10, 10, 15, e.flash)
   } else if (e.type === 'brute') {
     const yy = y + bob * 0.4
@@ -271,6 +319,7 @@ export function drawEnemy(ctx: CanvasRenderingContext2D, e: { x: number; y: numb
     if (e.weapon === 0) { px(ctx, x + 9, yy - 8 - up, 6, 7, pal.dark); px(ctx, x + 9, yy - 8 - up, 6, 2, pal.accent); px(ctx, x + 8, yy - 2, 2, 6, pal.dark) }
     else if (e.weapon === 1) { px(ctx, x + 9, yy - 9 - up, 2, 10, '#c9d4de'); for (let i = 0; i < 4; i++) px(ctx, x + (i % 2 ? 11 : 8), yy - 8 - up + i * 2, 2, 1, pal.accent) }
     else { px(ctx, x + 8, yy - 2, 7, 3, '#6e7a8a'); px(ctx, x + 15, yy - 1, 3, 1, pal.accent); px(ctx, x + 13, yy - 2, 2, 3, '#4a5560') }
+    enemyExtras(ctx, e, yy, t)
     flashBox(ctx, x - 11, yy - 12, 22, 21, e.flash)
   } else if (e.type === 'gunner') {
     const yy = y + bob * 0.5
@@ -291,6 +340,7 @@ export function drawEnemy(ctx: CanvasRenderingContext2D, e: { x: number; y: numb
     else if (e.weapon === 1) { px(ctx, 2, -1, 7, 3, '#39424e'); px(ctx, 8, -2, 3, 3, gl) }
     else { px(ctx, 2, -2, 8, 4, '#39424e'); px(ctx, 9, -1, 3, 2, gl); px(ctx, 3, -3, 3, 1, pal.accent) }
     ctx.restore()
+    enemyExtras(ctx, e, yy, t)
     flashBox(ctx, x - 5, yy - 11, 10, 16, e.flash)
   } else {
     const hover = Math.sin(t * 5 + e.phase) * 2.4
@@ -313,6 +363,7 @@ export function drawEnemy(ctx: CanvasRenderingContext2D, e: { x: number; y: numb
     else { px(ctx, x - 1, yy - 5, 2, 2, pal.accent) }
     if (e.weapon === 0) px(ctx, x, yy + 4, 1, 3, pal.accent)
     else if (e.weapon === 2) { px(ctx, x - 3, yy + 3, 1, 2, pal.dark); px(ctx, x + 2, yy + 3, 1, 2, pal.dark) }
+    enemyExtras(ctx, e, yy, t)
     flashBox(ctx, x - 7, yy - 6, 14, 13, e.flash)
   }
 }
@@ -706,7 +757,9 @@ function block3d(ctx: CanvasRenderingContext2D, fx: number, fy: number, fw: numb
   px(ctx, fx, fy - H, 3, fh, roofLight)
 }
 
-export function drawStructure(ctx: CanvasRenderingContext2D, poi: StructPoi, t: number) {
+export type FactionArch = 'industrial' | 'improvised' | 'corporate' | 'machine' | 'organic'
+
+export function drawStructure(ctx: CanvasRenderingContext2D, poi: StructPoi, t: number, arch: FactionArch = 'industrial', biome = 0) {
   const { x, y } = poi
   const hostile = poi.state === 'hostile'
   const cleared = poi.state === 'cleared'
@@ -790,6 +843,7 @@ export function drawStructure(ctx: CanvasRenderingContext2D, poi: StructPoi, t: 
     }
     // отметка состояния
     if (cleared) { px(ctx, doorX - 5, fy + fh - WALL_H - 8, 10, 6, '#3f6e33'); px(ctx, doorX - 3, fy + fh - WALL_H - 6, 6, 2, '#7dff5e') }
+    poiOverlays(ctx, poi, arch, biome, t)
     return
   }
 
@@ -1022,6 +1076,180 @@ export function drawStructure(ctx: CanvasRenderingContext2D, poi: StructPoi, t: 
     px(ctx, x - 2, y - 32, 4, 4, on ? '#3fe0ff' : '#1b4a5e')
     if (on) { ctx.fillStyle = 'rgba(63,224,255,0.25)'; ctx.beginPath(); ctx.arc(x, y - 30, 8, 0, Math.PI * 2); ctx.fill() }
     px(ctx, x - 7, y + 4, 3, 2, '#ffd54a')
+  }
+  poiOverlays(ctx, poi, arch, biome, t)
+}
+
+// ============================================================
+// §39/§40: ФРАКЦИОННЫЙ ЯЗЫК + БИОМНЫЕ СЛЕДЫ НА СТРУКТУРАХ
+// ============================================================
+function poiOverlays(ctx: CanvasRenderingContext2D, poi: StructPoi, arch: FactionArch, biome: number, t: number) {
+  const S = poi.seed
+  const blink = Math.sin(t * 3) > 0
+  // footprint структуры (крупная — fp, малая — условный)
+  const fp = poi.fp
+  const fx = fp ? fp.x : poi.x - 30
+  const fy = fp ? fp.y : poi.y - 18
+  const fw = fp ? fp.w : 60
+  const fh = fp ? fp.h : 36
+  const roofY = fy - (fp ? WALL_H : 6)
+  const baseY = fy + fh
+  const big = !!fp
+
+  // ---------- ФРАКЦИОННЫЙ СТИЛЬ ----------
+  if (arch === 'improvised') {
+    // пираты: латаные панели, шипы, грубая маркировка
+    const plates = ['#7a4a3a', '#5a6a4a', '#6a5a5a', '#8a6a4a']
+    for (let i = 0; i < 4; i++) {
+      const pxp = fx + 14 + shash(i + 3, S) * (fw - 40)
+      const pyp = roofY + 10 + shash(i + 31, S) * (fh - 8)
+      px(ctx, pxp, pyp, 10 + shash(i, S) * 8, 7, plates[i])
+      px(ctx, pxp, pyp, 2, 7, 'rgba(0,0,0,0.3)')
+    }
+    if (big) {
+      // шипы на южном фасаде
+      const dwx = poi.doorWorld?.x ?? fx + fw / 2
+      for (let i = 0; i < 5; i++) {
+        const sx = fx + 20 + i * (fw - 40) / 5
+        if (Math.abs(sx - dwx) < 30) continue
+        ctx.fillStyle = '#5e5040'
+        ctx.beginPath(); ctx.moveTo(sx, baseY); ctx.lineTo(sx + 4, baseY - 7); ctx.lineTo(sx + 8, baseY); ctx.closePath(); ctx.fill()
+      }
+      // красная полоса-«подпись»
+      px(ctx, fx + 8, baseY - WALL_H + 3, 26, 2, '#ff5533')
+      px(ctx, fx + 38, baseY - WALL_H + 3, 8, 2, '#ff5533')
+    } else {
+      px(ctx, fx + 6, fy + fh - 6, 18, 2, '#ff5533')
+    }
+  } else if (arch === 'corporate') {
+    // корпорация: чистые линии, фирменный бирюзовый кант, логотип
+    ctx.strokeStyle = 'rgba(63,224,255,0.55)'; ctx.lineWidth = 1
+    ctx.strokeRect(fx + 3.5, roofY + 3.5, fw - 7, fh - 4)
+    px(ctx, fx + 10, roofY + 8, 14, 8, '#e8f4ff')
+    px(ctx, fx + 12, roofY + 10, 10, 4, '#3fe0ff')
+    if (big) {
+      px(ctx, fx + 6, baseY - WALL_H + 2, fw - 12, 1, 'rgba(63,224,255,0.5)')
+      px(ctx, fx + fw - 26, baseY - WALL_H + 5, 12, 7, '#dcecf4')
+      px(ctx, fx + fw - 24, baseY - WALL_H + 7, 8, 3, '#3fe0ff')
+    }
+    // аккуратные белые панели на крыше
+    for (let i = 0; i < 2; i++) px(ctx, fx + fw - 60 + i * 26, roofY + 12, 18, 10, '#c9d8e6')
+  } else if (arch === 'machine') {
+    // РОЙ: неестественная симметрия, повторяющиеся огни, провода
+    const n = big ? 8 : 3
+    for (let i = 0; i < n; i++) {
+      const lx = fx + 12 + i * ((fw - 24) / (n - 1))
+      const onL = blink === (i % 2 === 0)
+      px(ctx, lx, baseY - (big ? WALL_H : 8) - 2, 3, 3, onL ? '#c96bff' : '#3a2b4a')
+    }
+    // провода, провисающие по фасаду
+    ctx.strokeStyle = 'rgba(90,70,110,0.8)'; ctx.lineWidth = 1
+    for (let i = 0; i < (big ? 3 : 1); i++) {
+      const wx0 = fx + 16 + i * (fw - 32) / 3
+      ctx.beginPath()
+      ctx.moveTo(wx0, baseY - (big ? WALL_H : 8) - 3)
+      ctx.quadraticCurveTo(wx0 + 14, baseY - (big ? WALL_H : 8) + 6, wx0 + 28, baseY - (big ? WALL_H : 8) - 3)
+      ctx.stroke()
+    }
+    // симметричные антенны на крыше
+    if (big) {
+      for (const mx of [fx + fw * 0.25, fx + fw * 0.75]) {
+        px(ctx, mx, roofY - 14, 2, 14, '#5e6e7e')
+        px(ctx, mx - 3, roofY - 14, 8, 2, '#5e6e7e')
+        px(ctx, mx - 1, roofY - 17, 4, 3, blink ? '#c96bff' : '#3a2b4a')
+      }
+    }
+  } else if (arch === 'organic') {
+    // дикие твари: когти, гнёзда, слизь
+    ctx.strokeStyle = 'rgba(20,16,12,0.7)'; ctx.lineWidth = 1.5
+    for (let i = 0; i < 3; i++) {
+      const cxp = fx + 14 + shash(i + 41, S) * (fw - 30)
+      const cyp = baseY - (big ? WALL_H : 8) + (big ? 2 : 0)
+      for (let k = 0; k < 3; k++) {
+        ctx.beginPath(); ctx.moveTo(cxp + k * 3, cyp + 8); ctx.lineTo(cxp + k * 3 + 2, cyp); ctx.stroke()
+      }
+    }
+    // гнёзда на крыше
+    for (let i = 0; i < 2; i++) {
+      const nx = fx + 20 + shash(i + 51, S) * (fw - 50)
+      ctx.fillStyle = '#3a3226'
+      ctx.beginPath(); ctx.ellipse(nx, roofY + 6, 9, 4, 0, 0, Math.PI * 2); ctx.fill()
+      px(ctx, nx - 2, roofY + 3, 2, 2, '#d8c8a8'); px(ctx, nx + 2, roofY + 4, 2, 2, '#c9b890')
+    }
+    // подтёки
+    for (let i = 0; i < 3; i++) {
+      const gx = fx + 10 + shash(i + 61, S) * (fw - 20)
+      px(ctx, gx, baseY - (big ? WALL_H : 8) - 2, 2, (big ? WALL_H : 8) + 2, 'rgba(125,255,94,0.35)')
+    }
+  } else {
+    // industrial (гильдия): сигнальные полосы у входа, ромб-эмблема
+    if (big) {
+      const doorX = poi.doorWorld?.x ?? fx + fw / 2
+      for (let i = 0; i < 4; i++) {
+        px(ctx, doorX - 22 + i * 4, baseY - WALL_H + 1, 2, 2, i % 2 ? '#f5a623' : '#222831')
+        px(ctx, doorX + 14 + i * 4 - 8, baseY - WALL_H + 1, 2, 2, i % 2 ? '#222831' : '#f5a623')
+      }
+      px(ctx, fx + 12, baseY - WALL_H + 6, 10, 10, '#2c3540')
+      ctx.save(); ctx.translate(fx + 17, baseY - WALL_H + 11); ctx.rotate(Math.PI / 4)
+      px(ctx, -3, -3, 6, 6, '#f5a623')
+      ctx.restore()
+    }
+  }
+
+  // ---------- БИОМНЫЕ СЛЕДЫ ----------
+  if (biome === 0) {
+    // пустыня: песчаные наносы, выцветшая крыша
+    ctx.fillStyle = 'rgba(200,154,110,0.55)'
+    ctx.beginPath(); ctx.ellipse(fx + 8, baseY, 16, 5, 0, 0, Math.PI * 2); ctx.ellipse(fx + fw - 10, baseY - 1, 20, 6, 0, 0, Math.PI * 2); ctx.fill()
+    px(ctx, fx + fw * 0.3, roofY + 4, fw * 0.25, 3, 'rgba(230,190,140,0.25)')
+  } else if (biome === 1) {
+    // пепельная пустошь: сажа
+    ctx.fillStyle = 'rgba(30,32,38,0.4)'
+    ctx.beginPath(); ctx.ellipse(fx + fw * 0.4, roofY + 8, 14, 5, 0, 0, Math.PI * 2); ctx.ellipse(fx + fw * 0.7, baseY, 12, 4, 0, 0, Math.PI * 2); ctx.fill()
+  } else if (biome === 2) {
+    // лёд: снег на крыше, сосульки
+    px(ctx, fx + 2, roofY - 1, fw - 4, 3, '#e8f4ff')
+    px(ctx, fx + 2, roofY - 1, fw - 4, 1, '#ffffff')
+    for (let i = 0; i < 4; i++) {
+      const ix = fx + 16 + i * (fw - 32) / 4 + shash(i + 71, S) * 8
+      ctx.fillStyle = 'rgba(168,216,232,0.85)'
+      ctx.beginPath(); ctx.moveTo(ix, baseY - (big ? WALL_H : 8)); ctx.lineTo(ix + 2, baseY - (big ? WALL_H : 8) + 5 + shash(i, S) * 4); ctx.lineTo(ix + 4, baseY - (big ? WALL_H : 8)); ctx.closePath(); ctx.fill()
+    }
+    ctx.fillStyle = 'rgba(232,244,255,0.5)'
+    ctx.beginPath(); ctx.ellipse(fx + 12, baseY, 14, 4, 0, 0, Math.PI * 2); ctx.fill()
+  } else if (biome === 3) {
+    // кристаллы: светящиеся осколки у основания
+    for (let i = 0; i < 3; i++) {
+      const cxp = fx + 8 + shash(i + 81, S) * (fw - 16)
+      const ch2 = 5 + shash(i + 91, S) * 7
+      ctx.fillStyle = i % 2 ? 'rgba(125,94,255,0.8)' : 'rgba(63,224,255,0.8)'
+      ctx.beginPath()
+      ctx.moveTo(cxp, baseY); ctx.lineTo(cxp + 3, baseY - ch2); ctx.lineTo(cxp + 6, baseY); ctx.closePath(); ctx.fill()
+      ctx.fillStyle = (i % 2 ? 'rgba(125,94,255,' : 'rgba(63,224,255,') + (0.12 + 0.1 * Math.sin(t * 4 + i)) + ')'
+      ctx.beginPath(); ctx.arc(cxp + 3, baseY - ch2 / 2, 7, 0, Math.PI * 2); ctx.fill()
+    }
+  } else if (biome === 4) {
+    // топи: лианы со свесов, светящиеся лужи
+    for (let i = 0; i < 4; i++) {
+      const vx = fx + 12 + i * (fw - 24) / 4
+      const vl = 6 + shash(i + 101, S) * 10
+      for (let k = 0; k < vl; k += 2) px(ctx, vx + (k % 4 === 0 ? 0 : 1), roofY + k, 2, 2, k % 4 ? '#3f6e33' : '#547d4a')
+      px(ctx, vx, roofY + vl, 2, 2, '#7dff5e')
+    }
+    ctx.fillStyle = `rgba(125,255,94,${0.16 + 0.08 * Math.sin(t * 3)})`
+    ctx.beginPath(); ctx.ellipse(fx + fw * 0.6, baseY + 1, 16, 4, 0, 0, Math.PI * 2); ctx.fill()
+  } else if (biome === 5) {
+    // вулканы: тлеющие трещины у основания, редкий дым
+    ctx.strokeStyle = `rgba(255,107,53,${0.5 + 0.3 * Math.sin(t * 5)})`; ctx.lineWidth = 1.5
+    ctx.beginPath()
+    ctx.moveTo(fx + 4, baseY + 2); ctx.lineTo(fx + 12, baseY - 2); ctx.lineTo(fx + 22, baseY + 2); ctx.lineTo(fx + 30, baseY - 1)
+    ctx.stroke()
+    if ((t % 3) < 1.2) {
+      ctx.fillStyle = 'rgba(120,110,105,0.25)'
+      ctx.beginPath(); ctx.arc(fx + fw - 20, roofY - 6 - (t * 6 % 12), 5, 0, Math.PI * 2); ctx.fill()
+    }
+    ctx.fillStyle = 'rgba(60,40,40,0.4)'
+    ctx.beginPath(); ctx.ellipse(fx + fw * 0.35, baseY, 15, 4, 0, 0, Math.PI * 2); ctx.fill()
   }
 }
 

@@ -296,6 +296,7 @@ export class Engine {
     const lz = this.streams.world
     const wp = landingWorldPos(region, site)
     this.landingOffset = { x: wp.x + lz.range(-20, 20), y: wp.y + lz.range(-20, 20) }
+    metaApi.addDiscoveredSite(`${region.id}_${site}`)
     this.chunks.clear(); this.chunkOrder = []; this.obstacles.clear(); this.materialized.clear()
     this.enemies = []; this.bullets = []; this.particles = []; this.floaters = []
     this.capsules = []; this.pickups = []; this.companions = []; this.pods = []
@@ -785,7 +786,16 @@ export class Engine {
       const pcx = Math.floor(p.x / CELL), pcy = Math.floor(p.y / CELL)
       for (let cy = pcy - 2; cy <= pcy + 2; cy++) for (let cx = pcx - 2; cx <= pcx + 2; cx++) {
         const key = `${cx}_${cy}`
-        if (!this.pois.has(key)) this.pois.set(key, poiForCell(this.seed, this.region, cx, cy))
+        if (!this.pois.has(key)) {
+          const poi = poiForCell(this.seed, this.region, cx, cy)
+          // §46: мир помнит зачищенные структуры между экспедициями
+          if (poi && metaApi.isClearedPoi(poi.id)) {
+            poi.state = 'cleared'
+            poi.guards = 0; poi.guardsLeft = 0
+            if (poi.ds) { poi.ds.cleared = true; poi.ds.bossSpawned = true }
+          }
+          this.pois.set(key, poi)
+        }
       }
       if (this.pois.size > 320) {
         for (const [k, v] of this.pois) {
@@ -954,6 +964,7 @@ export class Engine {
         poi.guardsLeft--
         if (poi.guardsLeft <= 0 && poi.state !== 'cleared') {
           poi.state = 'cleared'
+          metaApi.addClearedPoi(poi.id)
           this.hooks.onToast({ text: `${POI_DEFS[poi.type].label} ЗАЧИЩЕН`, color: '#7dff5e' })
           this.capsules.push(this.makeCapsule(poi.x, poi.y, irand(1, 2), false))
           p.credits += 60
@@ -1126,7 +1137,7 @@ export class Engine {
     const b = this.boss!
     this.boss = null
     const poi = this.activeDungeonPoi
-    if (poi && poi.ds) { poi.ds.cleared = true; poi.state = 'cleared' }
+    if (poi && poi.ds) { poi.ds.cleared = true; poi.state = 'cleared'; metaApi.addClearedPoi(poi.id) }
     this.runBosses++
     this.explode(b.x, b.y, 40, 40, '#ff8a3d')
     this.explode(b.x, b.y, 30, 20, '#ffd54a')
@@ -1939,6 +1950,8 @@ export class Engine {
         companions: metaApi.state.companions.map((c) => ({ uid: c.uid, name: c.name, color: c.color, rarity: c.rarity })),
         deployed: [...metaApi.state.deployed],
         stats: { ...metaApi.state.stats },
+        discoveredSites: [...metaApi.state.discoveredSites],
+        clearedCount: metaApi.state.clearedPois.length,
       },
     })
   }
@@ -1973,7 +1986,7 @@ export class Engine {
         const baseY = poi.dungeon ? poi.fp.y + poi.fp.h : poi.y + 18
         ds.push({
           y: baseY, f: () => {
-            SP.drawStructure(ctx, poi, t)
+            SP.drawStructure(ctx, poi, t, FACTIONS[this.region.faction].arch, this.biomeAt(poi.x, poi.y))
             const pd = Math.hypot(poi.x - this.p.x, poi.y - this.p.y)
             if (pd < 260) {
               const ly = poi.y - (poi.dungeon ? poi.fp.h / 2 + 16 : 34)
