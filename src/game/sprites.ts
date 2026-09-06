@@ -716,11 +716,17 @@ export function drawStructure(ctx: CanvasRenderingContext2D, poi: StructPoi, t: 
   if (poi.dungeon && poi.fp) {
     const fp = poi.fp
     const fx = fp.x, fy = fp.y, fw = fp.w, fh = fp.h
-    const isFactory = poi.type === 'factory'
+    const isFactory = poi.type === 'factory' || poi.type === 'powerplant' || poi.type === 'warehouse'
     const isCrash = poi.type === 'crash'
-    const roof = isFactory ? '#3d4550' : isCrash ? '#4a4438' : '#414b58'
-    const roofL = isFactory ? '#5a6470' : isCrash ? '#6e6450' : '#5e6e7e'
-    const wall = isFactory ? '#333a44' : isCrash ? '#3e382c' : '#39424e'
+    const PAL: Record<string, [string, string, string]> = {
+      factory: ['#3d4550', '#5a6470', '#333a44'],
+      warehouse: ['#3f4a44', '#5c685f', '#343f3a'],
+      powerplant: ['#4a4438', '#6e6450', '#3e382c'],
+      mine: ['#453f38', '#655c50', '#3a342c'],
+      milbase: ['#3c4450', '#5a6470', '#333c47'],
+      crash: ['#4a4438', '#6e6450', '#3e382c'],
+    }
+    const [roof, roofL, wall] = PAL[poi.type] || ['#414b58', '#5e6e7e', '#39424e']
     const wallD = '#242b34'
     block3d(ctx, fx, fy, fw, fh, WALL_H, roof, roofL, wall, wallD)
 
@@ -787,22 +793,209 @@ export function drawStructure(ctx: CanvasRenderingContext2D, poi: StructPoi, t: 
     return
   }
 
-  // --- малые структуры (без интерьера) ---
-  if (poi.type === 'settlement' || poi.type === 'outpost') {
-    const c1 = poi.type === 'settlement' ? '#5e6e7e' : '#4a6e5e'
-    const band = poi.type === 'settlement' ? '#f5a623' : '#7dff5e'
-    shadow(ctx, x, y + 18, 36, 8)
-    for (const [dx, r] of [[-20, 11], [4, 14], [24, 9]] as [number, number][]) {
-      for (let i = -r; i <= r; i++) {
-        const hh = Math.sqrt(r * r - i * i)
-        px(ctx, x + dx + i, y + 8 - hh * 0.8, 1, hh * 0.8 + 8, c1)
-      }
-      px(ctx, x + dx - r + 2, y + 2, r * 2 - 4, 2, 'rgba(255,255,255,0.12)')
+  // --- ПОСЕЛЕНИЕ: полноценный комплекс (§43) ---
+  if (poi.type === 'settlement') {
+    // грунтовая дорога и центральная площадь
+    px(ctx, x - 96, y + 4, 192, 9, '#4a4033')
+    px(ctx, x - 96, y + 4, 192, 1, '#57493a')
+    ctx.fillStyle = '#514536'
+    ctx.beginPath(); ctx.ellipse(x, y + 8, 52, 26, 0, 0, Math.PI * 2); ctx.fill()
+    ctx.fillStyle = '#5d4f3e'
+    ctx.beginPath(); ctx.ellipse(x, y + 8, 38, 18, 0, 0, Math.PI * 2); ctx.fill()
+    // частокол по периметру (с проёмом у дороги)
+    for (let i = 0; i < 22; i++) {
+      const a = (i / 22) * Math.PI * 2
+      if (Math.abs(Math.cos(a)) > 0.92) continue // ворота
+      const fx = x + Math.cos(a) * 88, fy = y + 6 + Math.sin(a) * 46
+      px(ctx, fx, fy - 8, 2, 8, '#5e5040')
+      px(ctx, fx, fy - 8, 2, 1, '#7a6a52')
     }
-    px(ctx, x + 1, y - 8, 3, 3, blink && !cleared ? band : '#39424e')
-    px(ctx, x - 32, y + 15, 64, 2, '#2c3540')
-    for (let i = 0; i < 3; i++) px(ctx, x - 8 + i * 5, y + 8, 2, 3, blink && i === 1 ? '#ffd54a' : '#1b2b3a')
-    if (poi.type === 'outpost') { px(ctx, x - 28, y - 14, 2, 28, '#8a96a3'); px(ctx, x - 28, y - 14, 11, 6, band) }
+    // колодец/насос на площади
+    shadow(ctx, x, y + 10, 8, 3)
+    ctx.strokeStyle = '#39424e'; ctx.lineWidth = 2
+    ctx.beginPath(); ctx.ellipse(x, y + 8, 7, 4, 0, 0, Math.PI * 2); ctx.stroke()
+    px(ctx, x - 1, y - 4, 2, 10, '#5e6e7e'); px(ctx, x - 4, y - 5, 8, 2, '#5e6e7e')
+    // фонари
+    for (const lx of [-30, 28]) {
+      px(ctx, x + lx, y - 14, 2, 20, '#39424e')
+      const on = blink || shash(lx, S) > 0.5
+      px(ctx, x + lx - 2, y - 17, 6, 4, on ? '#ffd54a' : '#5e5a44')
+      if (on) { ctx.fillStyle = 'rgba(255,213,74,0.14)'; ctx.beginPath(); ctx.ellipse(x + lx + 1, y + 4, 12, 6, 0, 0, Math.PI * 2); ctx.fill() }
+    }
+    // --- здания ---
+    // склад справа (объёмный)
+    block3d(ctx, x + 34, y - 26, 40, 30, 12, '#4a5560', '#6e7a8a', '#39424e', '#242b34')
+    px(ctx, x + 40, y - 26 + 30 - 10, 14, 10, '#222831')
+    px(ctx, x + 42, y - 22, 10, 2, '#f5a623')
+    // жилые дома слева (двускатные)
+    for (const [hx, hw] of [[-70, 26], [-40, 22]] as [number, number][]) {
+      shadow(ctx, x + hx + hw / 2, y - 4, hw / 2 + 2, 4)
+      px(ctx, x + hx, y - 18, hw, 16, '#5e5448')
+      px(ctx, x + hx, y - 18, hw, 3, '#6e6254')
+      ctx.fillStyle = '#4a4038'
+      ctx.beginPath()
+      ctx.moveTo(x + hx - 2, y - 18); ctx.lineTo(x + hx + hw / 2, y - 30); ctx.lineTo(x + hx + hw + 2, y - 18)
+      ctx.closePath(); ctx.fill()
+      px(ctx, x + hx + hw / 2 - 3, y - 12, 6, 10, '#3a322a')
+      px(ctx, x + hx + 3, y - 14, 5, 4, blink && shash(hx, S) > 0.4 ? '#ffd54a' : '#22201c')
+    }
+    // мастерская сзади (труба + искры)
+    block3d(ctx, x - 26, y - 52, 44, 22, 9, '#3d4550', '#5a6470', '#333a44', '#242b34')
+    px(ctx, x + 8, y - 66, 5, 16, '#4a5560')
+    px(ctx, x + 7, y - 68, 7, 3, '#5e6e7e')
+    if (!cleared) { ctx.fillStyle = 'rgba(150,160,170,0.3)'; ctx.beginPath(); ctx.arc(x + 10, y - 72 - ((t * 7) % 12), 3, 0, Math.PI * 2); ctx.fill() }
+    px(ctx, x - 20, y - 44, 8, 5, blink ? 'rgba(255,213,74,0.5)' : '#16222e')
+    // рыночный навес (полосатый)
+    px(ctx, x - 64, y + 18, 2, 12, '#5e5040'); px(ctx, x - 40, y + 18, 2, 12, '#5e5040')
+    for (let i = 0; i < 6; i++) px(ctx, x - 66 + i * 5, y + 14, 5, 4, i % 2 ? '#c9563c' : '#d8c8a8')
+    px(ctx, x - 62, y + 26, 20, 4, '#6e5a3c')
+    for (let i = 0; i < 4; i++) px(ctx, x - 60 + i * 5, y + 24, 3, 2, ['#7dff5e', '#ffd54a', '#ff8a3d', '#3fe0ff'][i])
+    // медпункт
+    block3d(ctx, x + 46, y + 14, 26, 18, 8, '#4a5560', '#6e7a8a', '#44505c', '#242b34')
+    px(ctx, x + 56, y + 18, 6, 2, '#ff5e8a'); px(ctx, x + 58, y + 16, 2, 6, '#ff5e8a')
+    // генераторная будка
+    px(ctx, x + 66, y - 8, 18, 14, '#39424e'); px(ctx, x + 66, y - 8, 18, 2, '#5e6e7e')
+    px(ctx, x + 69, y - 3, 12, 7, '#222831')
+    for (let i = 0; i < 3; i++) px(ctx, x + 70, y - 1 + i * 2, 10, 1, blink && i === Math.floor(t * 3) % 3 ? '#7dff5e' : '#3a4a3a')
+    // транспорт у дороги
+    shadow(ctx, x + 20, y + 22, 10, 3)
+    px(ctx, x + 10, y + 12, 22, 9, '#6e5a44'); px(ctx, x + 12, y + 10, 12, 5, '#8a7a5e')
+    px(ctx, x + 13, y + 11, 9, 3, '#1b2b3a')
+    ctx.fillStyle = '#222831'
+    ctx.beginPath(); ctx.arc(x + 14, y + 22, 3, 0, Math.PI * 2); ctx.arc(x + 28, y + 22, 3, 0, Math.PI * 2); ctx.fill()
+    // ящики и бочки
+    px(ctx, x + 36, y + 8, 8, 6, '#6e5a3c'); px(ctx, x + 36, y + 8, 8, 1, '#8a7650'); px(ctx, x + 45, y + 10, 6, 5, '#5e5040')
+    ctx.fillStyle = '#4a5560'; ctx.beginPath(); ctx.ellipse(x - 32, y + 16, 4, 5, 0, 0, Math.PI * 2); ctx.fill()
+    px(ctx, x - 35, y + 14, 6, 1, '#6e7a8a')
+    if (cleared) { px(ctx, x - 5, y - 44, 10, 6, '#3f6e33'); px(ctx, x - 3, y - 42, 6, 2, '#7dff5e') }
+  } else if (poi.type === 'outpost') {
+    const band = '#7dff5e'
+    shadow(ctx, x, y + 16, 30, 7)
+    block3d(ctx, x - 24, y - 14, 48, 26, 9, '#3d4a44', '#5c685f', '#34403a', '#242b34')
+    px(ctx, x - 8, y - 14 + 26 - 9, 16, 9, '#222831')
+    px(ctx, x - 8, y - 6, 16, 1, band)
+    px(ctx, x - 18, y - 8, 6, 4, blink ? 'rgba(125,255,94,0.5)' : '#16222e')
+    px(ctx, x + 18, y - 30, 2, 26, '#8a96a3')
+    for (let i = 0; i < 3; i++) px(ctx, x + 14 + i * 2, y - 28 + i * 2, 10 - i * 4, 1, '#5e6e7e')
+    px(ctx, x + 16, y - 32, 6, 4, blink ? band : '#1b4a3a')
+    px(ctx, x - 34, y + 4, 8, 6, '#6e5a3c'); px(ctx, x - 34, y + 4, 8, 1, '#8a7650')
+    if (cleared) { px(ctx, x - 5, y - 30, 10, 6, '#3f6e33'); px(ctx, x - 3, y - 28, 6, 2, '#7dff5e') }
+  } else if (poi.type === 'warehouse') {
+    // складской комплекс: два длинных корпуса + козловой кран
+    shadow(ctx, x, y + 16, 44, 8)
+    block3d(ctx, x - 44, y - 18, 42, 26, 10, '#3f4a44', '#5c685f', '#343f3a', '#242b34')
+    block3d(ctx, x + 6, y - 24, 38, 30, 13, '#424d46', '#606b62', '#37423c', '#242b34')
+    for (let i = 0; i < 3; i++) px(ctx, x - 38 + i * 12, y - 18 + 26 - 8, 8, 8, '#222831')
+    px(ctx, x + 16, y - 24 + 30 - 11, 18, 11, '#1c222b')
+    px(ctx, x + 24, y - 24 + 30 - 11, 2, 11, '#f5a623')
+    // рифлёные крыши
+    for (let i = 0; i < 5; i++) px(ctx, x - 42 + i * 8, y - 26, 4, 1, '#525e55')
+    // козловой кран
+    px(ctx, x - 52, y - 44, 3, 40, '#5e6e7e'); px(ctx, x + 48, y - 44, 3, 40, '#5e6e7e')
+    px(ctx, x - 54, y - 46, 108, 3, '#6e7a8a')
+    const hookX = x - 20 + Math.sin(t * 0.7) * 26
+    px(ctx, hookX, y - 43, 1, 14, '#39424e')
+    px(ctx, hookX - 4, y - 30, 9, 7, hostile ? '#8a5a3c' : '#4a6e5e')
+    px(ctx, hookX - 4, y - 30, 9, 1, '#f5a623')
+    // контейнеры штабелем
+    for (const [cx2, cy2, cc] of [[-60, 8, '#4a6e5e'], [-48, 8, '#8a5a3c'], [-54, 0, '#3e5a6e'], [52, 10, '#6e5a3c']] as [number, number, string][]) {
+      px(ctx, x + cx2, y + cy2, 12, 8, cc); px(ctx, x + cx2, y + cy2, 12, 1, 'rgba(255,255,255,0.18)'); px(ctx, x + cx2 + 5, y + cy2 + 2, 2, 4, 'rgba(0,0,0,0.3)')
+    }
+    if (hostile && blink) { px(ctx, x + 40, y - 50, 3, 3, '#ff5533') }
+  } else if (poi.type === 'powerplant') {
+    // энергостанция: машзал + две градирни + ЛЭП
+    shadow(ctx, x, y + 16, 46, 8)
+    block3d(ctx, x - 40, y - 16, 46, 26, 11, '#4a4438', '#6e6450', '#3e382c', '#242b34')
+    for (let i = 0; i < 4; i++) px(ctx, x - 34 + i * 10, y - 16 + 26 - 7, 6, 7, '#1c222b')
+    // трансформатор с гудением
+    px(ctx, x + 12, y + 2, 16, 12, '#4a5560'); px(ctx, x + 12, y + 2, 16, 2, '#6e7a8a')
+    for (let i = 0; i < 3; i++) px(ctx, x + 14 + i * 5, y - 2, 2, 4, '#8a96a3')
+    if (blink) { ctx.fillStyle = 'rgba(63,224,255,0.2)'; ctx.beginPath(); ctx.arc(x + 20, y + 4, 7, 0, Math.PI * 2); ctx.fill() }
+    // градирни (цилиндры с паром)
+    for (const [tx2, th] of [[26, 34], [48, 28]] as [number, number][]) {
+      const tw = 20
+      for (let i = -tw / 2; i <= tw / 2; i++) {
+        const hh = Math.sqrt((tw / 2) * (tw / 2) - i * i) * 0.3
+        px(ctx, x + tx2 + i, y - 20 - th + hh, 1, th - hh + 10, i > 2 ? '#3e382c' : '#57503f')
+      }
+      px(ctx, x + tx2 - tw / 2, y - 20 - th + 2, tw, 2, '#6e6450')
+      ctx.fillStyle = 'rgba(180,180,175,0.28)'
+      const puff = (t * 9 + tx2) % 18
+      ctx.beginPath(); ctx.arc(x + tx2, y - 26 - th - puff, 4 + puff * 0.3, 0, Math.PI * 2); ctx.fill()
+    }
+    // ЛЭП
+    px(ctx, x - 58, y - 34, 2, 38, '#5e6e7e'); px(ctx, x - 64, y - 34, 14, 2, '#5e6e7e')
+    ctx.strokeStyle = 'rgba(140,150,163,0.5)'; ctx.lineWidth = 1
+    ctx.beginPath(); ctx.moveTo(x - 62, y - 32); ctx.quadraticCurveTo(x - 30, y - 22, x - 4, y - 30); ctx.stroke()
+    ctx.beginPath(); ctx.moveTo(x - 50, y - 32); ctx.quadraticCurveTo(x - 24, y - 24, x + 2, y - 32); ctx.stroke()
+    if (hostile && blink) { px(ctx, x - 60, y - 40, 3, 3, '#ff5533') }
+  } else if (poi.type === 'mine') {
+    // шахта: копер, конвейер, отвалы, вагонетки
+    shadow(ctx, x, y + 16, 42, 8)
+    // копер (А-образная башня)
+    ctx.strokeStyle = '#5e6e7e'; ctx.lineWidth = 3
+    ctx.beginPath(); ctx.moveTo(x - 14, y + 10); ctx.lineTo(x - 2, y - 44); ctx.lineTo(x + 10, y + 10); ctx.stroke()
+    ctx.lineWidth = 1.5
+    ctx.beginPath(); ctx.moveTo(x - 10, y - 12); ctx.lineTo(x + 6, y - 12); ctx.moveTo(x - 7, y - 28); ctx.lineTo(x + 3, y - 28); ctx.stroke()
+    ctx.fillStyle = '#4a5560'
+    ctx.beginPath(); ctx.moveTo(x - 8, y - 44); ctx.lineTo(x + 4, y - 44); ctx.lineTo(x - 2, y - 52); ctx.closePath(); ctx.fill()
+    px(ctx, x - 3, y - 47, 2, 2, blink ? '#ffd54a' : '#5e5a44')
+    // трос и клеть
+    const lift = 10 + Math.sin(t * 1.2) * 8
+    px(ctx, x - 2, y - 44, 1, 30 - lift, '#39424e')
+    px(ctx, x - 5, y - 16 - lift, 7, 6, '#5e5040')
+    // конвейерная галерея
+    ctx.fillStyle = '#3e382c'
+    ctx.beginPath(); ctx.moveTo(x + 8, y - 6); ctx.lineTo(x + 46, y - 26); ctx.lineTo(x + 46, y - 18); ctx.lineTo(x + 8, y + 2); ctx.closePath(); ctx.fill()
+    px(ctx, x + 14, y - 4, 2, 10, '#39424e'); px(ctx, x + 32, y - 14, 2, 14, '#39424e')
+    if (!cleared) for (let i = 0; i < 3; i++) px(ctx, x + 12 + i * 12 + ((t * 14 + i * 6) % 10), y - 9 - i * 5, 3, 2, '#6e5a3c')
+    // отвалы породы
+    for (const [ox2, r2] of [[-44, 14], [-26, 10], [38, 12]] as [number, number][]) {
+      ctx.fillStyle = '#4a4438'
+      ctx.beginPath(); ctx.moveTo(x + ox2 - r2, y + 14); ctx.lineTo(x + ox2, y + 14 - r2); ctx.lineTo(x + ox2 + r2, y + 14); ctx.closePath(); ctx.fill()
+      px(ctx, x + ox2 - 2, y + 12 - r2 + 3, 3, 2, '#57503f')
+    }
+    // вагонетка
+    px(ctx, x - 8, y + 12, 14, 7, '#5e5040'); px(ctx, x - 8, y + 12, 14, 2, '#7a6a52')
+    ctx.fillStyle = '#222831'
+    ctx.beginPath(); ctx.arc(x - 5, y + 20, 2.5, 0, Math.PI * 2); ctx.arc(x + 3, y + 20, 2.5, 0, Math.PI * 2); ctx.fill()
+    if (hostile && blink) { px(ctx, x - 4, y - 56, 3, 3, '#ff5533') }
+  } else if (poi.type === 'milbase') {
+    // форпост: вышки, ДОТы, мешки с песком, радар
+    shadow(ctx, x, y + 16, 40, 8)
+    block3d(ctx, x - 30, y - 16, 40, 24, 9, '#3c4450', '#5a6470', '#333c47', '#242b34')
+    px(ctx, x - 14, y - 16 + 24 - 9, 14, 9, '#222831')
+    px(ctx, x - 14, y - 8, 14, 1, '#f5a623')
+    // ДОТы
+    for (const bx of [-48, 34]) {
+      ctx.fillStyle = '#4a5560'
+      ctx.beginPath(); ctx.arc(x + bx, y + 6, 9, Math.PI, 0); ctx.fill()
+      px(ctx, x + bx - 9, y + 6, 18, 3, '#39424e')
+      px(ctx, x + bx - 3, y - 1, 6, 3, '#1c222b')
+    }
+    // мешки с песком
+    for (let i = 0; i < 5; i++) {
+      ctx.fillStyle = i % 2 ? '#6e6250' : '#635844'
+      ctx.beginPath(); ctx.ellipse(x - 20 + i * 9, y + 14, 5, 3, 0, 0, Math.PI * 2); ctx.fill()
+    }
+    // наблюдательная вышка
+    px(ctx, x + 44, y - 6, 3, 22, '#5e6e7e'); px(ctx, x + 52, y - 6, 3, 22, '#5e6e7e')
+    ctx.lineWidth = 1; ctx.strokeStyle = '#5e6e7e'
+    ctx.beginPath(); ctx.moveTo(x + 45, y + 10); ctx.lineTo(x + 54, y + 2); ctx.moveTo(x + 54, y + 10); ctx.lineTo(x + 45, y + 2); ctx.stroke()
+    px(ctx, x + 41, y - 18, 17, 12, '#3c4450'); px(ctx, x + 41, y - 18, 17, 2, '#5a6470')
+    px(ctx, x + 44, y - 14, 11, 4, blink ? 'rgba(255,213,74,0.5)' : '#16222e')
+    // радарная тарелка
+    px(ctx, x - 44, y - 30, 2, 18, '#5e6e7e')
+    ctx.save(); ctx.translate(x - 43, y - 32); ctx.rotate(Math.sin(t * 0.8) * 0.4)
+    ctx.fillStyle = '#8a96a3'
+    ctx.beginPath(); ctx.ellipse(0, 0, 3, 8, 0, 0, Math.PI * 2); ctx.fill()
+    ctx.restore()
+    // флаг
+    px(ctx, x - 4, y - 40, 1, 20, '#8a96a3')
+    const fw2 = 8 + Math.sin(t * 6) * 1.5
+    ctx.fillStyle = hostile ? '#ff5533' : '#f5a623'
+    ctx.beginPath(); ctx.moveTo(x - 3, y - 40); ctx.lineTo(x - 3 + fw2, y - 38); ctx.lineTo(x - 3, y - 35); ctx.closePath(); ctx.fill()
+    if (hostile && blink) { px(ctx, x + 48, y - 22, 3, 3, '#ff5533') }
   } else if (poi.type === 'camp') {
     shadow(ctx, x, y + 12, 28, 6)
     for (const [dx, dy, w2] of [[-18, -4, 15], [2, 2, 17], [-6, -13, 11]] as [number, number, number][]) {

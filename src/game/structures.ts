@@ -22,7 +22,7 @@ export const CELL = 512
 export const TILE = 16
 export const WALL_M = 10 // внешняя толщина стены корпуса (px)
 
-export type PoiType = 'settlement' | 'camp' | 'factory' | 'crash' | 'bunker' | 'relay' | 'outpost'
+export type PoiType = 'settlement' | 'camp' | 'factory' | 'crash' | 'bunker' | 'relay' | 'outpost' | 'warehouse' | 'powerplant' | 'mine' | 'milbase'
 export type DungeonType = 'bunker' | 'lab' | 'factory' | 'crash'
 
 export interface PoiDef { label: string; radius: number; dungeonChance: number; guards: number; dtype?: DungeonType }
@@ -34,6 +34,10 @@ export const POI_DEFS: Record<PoiType, PoiDef> = {
   bunker: { label: 'ВОЕННЫЙ БУНКЕР', radius: 90, dungeonChance: 0.9, guards: 4, dtype: 'bunker' },
   relay: { label: 'РЕЛЕ-СТАНЦИЯ', radius: 42, dungeonChance: 0, guards: 0 },
   outpost: { label: 'АВАНПОСТ ГИЛЬДИИ', radius: 60, dungeonChance: 0, guards: 0 },
+  warehouse: { label: 'СКЛАДСКОЙ КОМПЛЕКС', radius: 85, dungeonChance: 0.5, guards: 4, dtype: 'factory' },
+  powerplant: { label: 'ЭНЕРГОСТАНЦИЯ', radius: 95, dungeonChance: 0.55, guards: 5, dtype: 'factory' },
+  mine: { label: 'ШАХТА «ПЛАС-9»', radius: 90, dungeonChance: 0.6, guards: 4, dtype: 'bunker' },
+  milbase: { label: 'ФОРПОСТ РЕГИМЕНТА', radius: 110, dungeonChance: 0.8, guards: 6, dtype: 'bunker' },
 }
 
 // Тайлы: 0 пол · 1 стена · 2 запертая дверь · 3 рубильник · 4 хрупкая стена · 5 ловушка · 6 вход/выход

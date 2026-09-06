@@ -1021,6 +1021,16 @@ export class Engine {
   updateBoss(dt: number) {
     const b = this.boss
     if (!b) return
+    // последовательность смерти: босс больше не атакует, арена «рушится» взрывами
+    if (b.deathT > 0) {
+      b.deathT -= dt
+      b.walkT += dt
+      if (Math.floor((b.deathT + dt) * 6) !== Math.floor(b.deathT * 6)) {
+        this.explode(b.x + (rnd() - 0.5) * 44, b.y + (rnd() - 0.5) * 32, 16, 0, '#ff8a3d')
+      }
+      if (b.deathT <= 0) this.finishBoss()
+      return
+    }
     const p = this.p
     b.flash -= dt
     b.walkT += dt
@@ -1030,6 +1040,8 @@ export class Engine {
     if (newPhase > b.phase) {
       b.phase = newPhase
       audio.bossRoar()
+      // §23: на половине здоровья арена меняется — босс ломает механизмы
+      if (newPhase === 1 && !b.arenaBroken) { b.arenaBroken = true; this.mutateArena() }
       this.shake = Math.max(this.shake, 3)
       this.hooks.onToast({ text: b.def.phases[newPhase].name, color: '#ff5533' })
       if (newPhase === 2 && !b.summoned) {
@@ -1089,7 +1101,7 @@ export class Engine {
 
   damageBoss(dmg: number) {
     const b = this.boss
-    if (!b) return
+    if (!b || b.deathT > 0) return
     b.hp -= dmg
     b.flash = 0.1
     this.burst(b.x, b.y - 4, 2, b.def.core, 1)
@@ -1097,7 +1109,20 @@ export class Engine {
     if (b.hp <= 0) this.killBoss()
   }
 
+  /** Начало последовательности смерти */
   killBoss() {
+    const b = this.boss!
+    b.hp = 0
+    b.deathT = 1.6
+    b.move = 'chase'
+    b.windup = 0
+    audio.bossRoar()
+    this.shake = Math.max(this.shake, 5)
+    this.hooks.onToast({ text: `${b.def.name}: КРИТИЧЕСКИЕ ПОВРЕЖДЕНИЯ`, color: '#ff8a3d' })
+  }
+
+  /** Завершение: награды после анимации разрушения */
+  finishBoss() {
     const b = this.boss!
     this.boss = null
     const poi = this.activeDungeonPoi
@@ -1116,7 +1141,40 @@ export class Engine {
     this.pickups.push({ x: b.x - 14, y: b.y, vx: 0, vy: 0, kind: 'weapon', color: RARITIES[w.rarity].color, phase: rnd() * 6, weapon: w })
     this.pickups.push({ x: b.x + 14, y: b.y, vx: 0, vy: 0, kind: 'heart', color: '#ff5a7a', phase: rnd() * 6, val: Math.round(p.maxHp * 0.5) })
     if (rnd() < b.def.rewards.permanentChance) this.grantPermanent()
-    this.hooks.onToast({ text: 'СТРАЖ УНИЧТОЖЕН. КОМПЛЕКС ЗАЧИЩЕН', color: '#7dff5e' })
+    this.hooks.onToast({ text: `${b.def.name} УНИЧТОЖЕН. КОМПЛЕКС ЗАЧИЩЕН`, color: '#7dff5e' })
+  }
+
+  /** §23: мутация арены — опасности активируются, босс проламывает боковые ниши */
+  mutateArena() {
+    const poi = this.activeDungeonPoi
+    if (!poi || !poi.dungeon) return
+    const d = poi.dungeon
+    const br = d.rooms.find((r) => r.kind === 'boss')
+    if (!br) return
+    // искрящие панели и опасные зоны по краям арены
+    for (let i = 0; i < 6; i++) {
+      const tx = br.x + 1 + irand(0, Math.max(0, br.w - 3))
+      const ty = i % 2 === 0 ? br.y + 1 : br.y + br.h - 2
+      if (d.tiles[ty * d.cols + tx] === 0) setDungeonTile(d, d.ox + tx * TILE + 8, d.oy + ty * TILE + 8, 5)
+    }
+    // босс пробивает стены — открываются боковые ниши с грузом
+    const spots: [number, number, number, number][] = [
+      [br.x - 1, br.y + 2, br.x - 2, br.y + 2],
+      [br.x + br.w, br.y + 2, br.x + br.w + 1, br.y + 2],
+    ]
+    for (const [wx, wy, nx, ny] of spots) {
+      if (nx < 2 || ny < 2 || nx > d.cols - 3 || ny > d.rows - 3) continue
+      if (d.tiles[wy * d.cols + wx] !== 1 || d.tiles[ny * d.cols + nx] !== 1) continue
+      const beyond = nx > wx ? nx + 1 : nx - 1
+      if (d.tiles[ny * d.cols + beyond] !== 1) continue // не пробиваем внешний периметр
+      setDungeonTile(d, d.ox + wx * TILE + 8, d.oy + wy * TILE + 8, 0)
+      setDungeonTile(d, d.ox + nx * TILE + 8, d.oy + ny * TILE + 8, 0)
+      this.capsules.push(this.makeCapsule(d.ox + nx * TILE + 8, d.oy + ny * TILE + 8, 2, false))
+      this.burst(d.ox + nx * TILE + 8, d.oy + ny * TILE + 8, 12, '#8a96a3', 2)
+    }
+    this.hooks.onToast({ text: 'АРЕНА РАЗРУШАЕТСЯ: ОТКРЫТЫ ПРОХОДЫ, СИСТЕМЫ ОТКАЗЫВАЮТ', color: '#ff8a3d' })
+    this.shake = Math.max(this.shake, 5)
+    audio.explode()
   }
 
   grantPermanent() {
@@ -2066,7 +2124,7 @@ export class Engine {
 
   drawDungeonTiles(ctx: CanvasRenderingContext2D, poi: Poi, ox: number, oy: number, W: number, H: number, t: number) {
     const d = poi.dungeon!
-    const style: 'tech' | 'wreck' | 'vault' = poi.type === 'crash' ? 'wreck' : poi.type === 'bunker' ? 'vault' : 'tech'
+    const style: 'tech' | 'wreck' | 'vault' = poi.type === 'crash' ? 'wreck' : (poi.type === 'bunker' || poi.type === 'mine' || poi.type === 'milbase') ? 'vault' : 'tech'
     const tx0 = Math.max(0, Math.floor((ox - d.ox) / TILE))
     const ty0 = Math.max(0, Math.floor((oy - d.oy) / TILE))
     const tx1 = Math.min(d.cols - 1, Math.floor((ox + W - d.ox) / TILE))
