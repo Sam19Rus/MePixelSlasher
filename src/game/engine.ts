@@ -12,7 +12,7 @@ import { makeStreams, Rng, type RngStreams } from './rng'
 import { getRegion, REGIONS, landingWorldPos, FACTIONS, type RegionDef } from './regions'
 import { makeEncounter, updateEncounterLogic, type Encounter } from './encounters'
 import { CELL, TILE, WALL_M, POI_DEFS, poiForCell, makeStarterDungeon, dungeonTileAt, setDungeonTile, inDungeonBounds, roomAt, type Poi, type DungeonLayout } from './structures'
-import { BOSSES, makeBoss, drawBoss, type BossState } from './bosses'
+import { makeBoss, pickBoss, drawBoss, type BossState } from './bosses'
 import { Director } from './director'
 import { metaApi, artifactBonuses, PERMANENT_POOL } from './meta'
 import { SHIP_W, SHIP_H, drawShipInterior, zoneAt, shipBlocked, type ShipZoneId } from './ship'
@@ -871,10 +871,11 @@ export class Engine {
         const bx0 = d.ox + br.x * TILE, by0 = d.oy + br.y * TILE
         if (p.x > bx0 && p.x < bx0 + br.w * TILE && p.y > by0 && p.y < by0 + br.h * TILE) {
           dp.ds.bossSpawned = true
-          this.boss = makeBoss(BOSSES.warden, d.ox + d.bossCenter.x, d.oy + d.bossCenter.y)
+          const def = pickBoss(d.type, this.seed)
+          this.boss = makeBoss(def, d.ox + d.bossCenter.x, d.oy + d.bossCenter.y)
           audio.bossRoar()
           this.shake = Math.max(this.shake, 4)
-          this.hooks.onToast({ text: 'СТРАЖ «ЦЕРБЕР»: ОБНАРУЖЕН ВТОРЖЕНЕЦ', color: '#ff5533' })
+          this.hooks.onToast({ text: `${def.name}: ОБНАРУЖЕН ВТОРЖЕНЕЦ`, color: '#ff5533' })
         }
       }
     }
@@ -1821,7 +1822,7 @@ export class Engine {
         if (s && s.dungeon && s.ds) this.applyEnter(s)
         break
       }
-      case 'boss': this.boss = makeBoss(BOSSES.warden, p.x + 90, p.y); audio.bossRoar(); break
+      case 'boss': this.boss = makeBoss(pickBoss(this.activeDungeonPoi?.dungeon?.type ?? 'bunker', this.seed), p.x + 90, p.y); audio.bossRoar(); break
       case 'supply': this.spawnSupply(); break
       case 'kill': this.god = false; this.damagePlayer(99999); break
       case 'artifact': this.grantPermanent(); break
