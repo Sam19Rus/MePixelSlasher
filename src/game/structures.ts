@@ -550,3 +550,16 @@ export function poiForCell(seed: number, region: RegionDef, cx: number, cy: numb
   const y = cy * CELL + CELL / 2 + rng.range(-110, 110)
   return buildPoi(`${region.id}_${cx}_${cy}`, type, x, y, seed, rng, region.tier, region.faction)
 }
+
+/** Лёгкая детерминированная копия первых бросков poiForCell (без генерации данжа).
+ *  Нужна для отрисовки дорог на чанках: позиция/тип POI без тяжёлой работы. */
+export function poiPosForCell(seed: number, region: RegionDef, cx: number, cy: number): { x: number; y: number; type: PoiType } | null {
+  const rng = new Rng(((seed ^ (cx * 73856093)) ^ (cy * 19349663)) >>> 0)
+  if (rng.next() > 0.2) return null
+  let total = 0
+  for (const e of region.poiTable) total += e.w
+  let roll = rng.next() * total
+  let type: PoiType = 'camp'
+  for (const e of region.poiTable) { roll -= e.w; if (roll <= 0) { type = e.type; break } }
+  return { x: cx * CELL + CELL / 2 + rng.range(-110, 110), y: cy * CELL + CELL / 2 + rng.range(-110, 110), type }
+}

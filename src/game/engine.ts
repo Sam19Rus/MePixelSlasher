@@ -11,7 +11,7 @@ import * as SP from './sprites'
 import { makeStreams, Rng, type RngStreams } from './rng'
 import { getRegion, REGIONS, landingWorldPos, FACTIONS, type RegionDef } from './regions'
 import { makeEncounter, updateEncounterLogic, type Encounter } from './encounters'
-import { CELL, TILE, WALL_M, POI_DEFS, poiForCell, makeStarterDungeon, dungeonTileAt, setDungeonTile, inDungeonBounds, roomAt, type Poi, type DungeonLayout } from './structures'
+import { CELL, TILE, WALL_M, POI_DEFS, poiForCell, poiPosForCell, makeStarterDungeon, dungeonTileAt, setDungeonTile, inDungeonBounds, roomAt, type Poi, type DungeonLayout } from './structures'
 import { makeBoss, pickBoss, drawBoss, type BossState } from './bosses'
 import { Director } from './director'
 import { metaApi, artifactBonuses, PERMANENT_POOL } from './meta'
@@ -52,7 +52,7 @@ interface Companion {
   pal: { main: string; dark: string; accent: string }
   walkT: number; aim: number; phase: number; fireCd: number; flash: number
   perm?: boolean; permUid?: string
-  weapon?: { name: string; color: string; dmgBoost: number; rateBoost: number }
+  weapon?: { name: string; color: string; dmgBoost: number; rateBoost: number; proj?: string; dmg?: number; rate?: number }
 }
 interface Enemy {
   x: number; y: number; type: string; def: (typeof ENEMY_DEFS)['grunt']
@@ -126,7 +126,7 @@ export class Engine {
   banked = false
 
   p = this.freshPlayer()
-  permBonus = { hp: 0, dmg: 0, rate: 0, acc: 0 }
+  permBonus = { hp: 0, dmg: 0, rate: 0, acc: 0, crit: 0 }
   spawnAnim = 0
   dead = false
   deadT = 0
@@ -310,10 +310,26 @@ export class Engine {
     this.compUp = {}
     this.p = this.freshPlayer()
     this.permBonus = artifactBonuses(metaApi.state.artifacts)
-    this.recalcBonuses()
-    const w = genWeapon(0, region.lootBias.kits[0] ?? 0)
+    // ---- постоянная экипировка с корабля (оружие + броня) ----
+    const ARMOR_IDX: Record<string, number> = { ШЛЕМ: 0, НАГРУДНИК: 1, ПЕРЧАТКИ: 2, БОТИНКИ: 3 }
+    let startW: Weapon | null = null
+    for (const a of metaApi.state.artifacts) {
+      if (a.kind === 'weapon' && a.data) {
+        const pw = a.data as Weapon
+        if (!startW || weaponScore(pw) > weaponScore(startW)) startW = pw
+      } else if (a.kind === 'armor' && a.data) {
+        const pa = a.data as Armor
+        const idx = ARMOR_IDX[pa.slot] ?? -1
+        if (idx >= 0) {
+          const cur = this.p.armor[idx] as Armor | null
+          if (!cur || pa.score > cur.score) this.p.armor[idx] = pa
+        }
+      }
+    }
+    const w = startW ?? genWeapon(0, region.lootBias.kits[0] ?? 0)
     this.p.weapons = [w]
     this.p.mag = w.mag
+    this.recalcBonuses()
     this.time = 0; this.spawnT = 0; this.dead = false; this.deadT = 0
     this.p.x = this.landingOffset.x; this.p.y = this.landingOffset.y
     this.spawnAnim = 0.001; this.camX = this.p.x; this.camY = this.p.y; this.shake = 0
@@ -457,6 +473,8 @@ export class Engine {
       }
       g.globalAlpha = 1
     }
+    // ---------- ДОРОГИ: накатанные тракты между структурами ----------
+    this.drawRoads(g, cx, cy, wx0, wy0)
     const key = this.chunkKey(cx, cy)
     if (!this.materialized.has(key)) {
       this.materialized.add(key)
@@ -478,6 +496,62 @@ export class Engine {
       g.fillStyle = dec[0]; g.fillRect(lx - o.r, ly - o.r * 1.4, o.r * 2, o.r * 1.6)
       g.fillStyle = dec[1]; g.fillRect(lx - o.r, ly - o.r * 1.4, o.r * 2, 2)
       g.fillStyle = dec[2]; g.fillRect(lx - o.r * 0.5, ly - o.r * 1.1, 2, 2)
+    }
+  }
+
+  /** Детерминированные грунтовые тракты: каждая структура соединена дорогой
+   *  с ближайшей соседней; если соседа нет — отворот на юго-запад. */
+  drawRoads(g: CanvasRenderingContext2D, cx: number, cy: number, wx0: number, wy0: number) {
+    const region = this.region
+    const door = (p: { x: number; y: number }) => ({ x: p.x, y: p.y + 24 })
+    // собираем POI вокруг чанка
+    const list: { x: number; y: number; type: string }[] = []
+    for (let j = cy - 2; j <= cy + 2; j++) for (let i = cx - 2; i <= cx + 2; i++) {
+      const p = poiPosForCell(this.seed, region, i, j)
+      if (p) list.push(p)
+    }
+    const stamp = (px: number, py: number, nx: number, ny: number, n: number) => {
+      if (px < wx0 - 6 || px > wx0 + CHUNK + 6 || py < wy0 - 6 || py > wy0 + CHUNK + 6) return
+      const lx = px - wx0, ly = py - wy0
+      // полотно
+      g.fillStyle = 'rgba(0,0,0,0.16)'
+      g.fillRect(lx - 3.5, ly - 2.5, 7, 5)
+      // колеи
+      g.fillStyle = 'rgba(0,0,0,0.16)'
+      g.fillRect(lx - 2.5 + nx * 2, ly - 2 + ny * 2, 2, 4)
+      g.fillRect(lx - 2.5 - nx * 2, ly - 2 - ny * 2, 2, 4)
+      // редкие светлые камни
+      if (hash2(px | 0, py | 0, this.seed + n) > 0.86) {
+        g.fillStyle = 'rgba(255,255,255,0.10)'
+        g.fillRect(lx - 1, ly + 1, 2, 1)
+      }
+    }
+    for (const a of list) {
+      const da = door(a)
+      // ближайший сосед среди POI в радиусе ~1.5 ячейки
+      let best: { x: number; y: number } | null = null
+      let bd = 880
+      for (const b of list) {
+        if (b === a) continue
+        const d = Math.hypot(b.x - a.x, b.y - a.y)
+        if (d < bd) { bd = d; best = door(b) }
+      }
+      // нет соседа — отворот в сторону «большой дороги» (юго-запад)
+      const end = best ?? { x: da.x - 150, y: da.y + 420 }
+      const dx = end.x - da.x, dy = end.y - da.y
+      const len = Math.hypot(dx, dy)
+      if (len < 40) continue
+      const nx = -dy / len, ny = dx / len
+      const steps = Math.ceil(len / 7)
+      for (let s = 0; s <= steps; s++) {
+        const k = s / steps
+        // лёгкое детерминированное виляние
+        const wob = Math.sin(k * 9 + a.x * 0.013) * 3
+        stamp(da.x + dx * k + nx * wob, da.y + dy * k + ny * wob, nx, ny, s)
+      }
+      // развилка у двери: небольшая площадка
+      g.fillStyle = 'rgba(0,0,0,0.13)'
+      g.beginPath(); g.ellipse(da.x - wx0, da.y - wy0, 9, 6, 0, 0, Math.PI * 2); g.fill()
     }
   }
 
@@ -1189,27 +1263,61 @@ export class Engine {
   }
 
   grantPermanent() {
+    // постоянные награды — только экипируемое: оружие, броня, модули, артефакты, компаньоны.
+    // Кредиты здесь НЕ выдаются никогда.
     const owned = new Set(metaApi.state.artifacts.map((a) => a.id))
-    const ownedBp = new Set(metaApi.state.blueprints)
-    const pool = PERMANENT_POOL.filter((d) => (d.kind === 'artifact' ? !owned.has(d.id) : !ownedBp.has(d.id)))
+    const pool = PERMANENT_POOL.filter((d) => !owned.has(d.id))
     if (!pool.length) {
-      metaApi.earnCredits(500)
-      this.hooks.onToast({ text: 'ПОСТОЯННАЯ НАГРАДА → 500 КРЕДИТОВ', color: '#ffd54a' })
+      // пул исчерпан — уникальный трофейный ствол (бесконечно, всегда экипируемый)
+      const w = genWeapon(4, irand(0, 11))
+      const epithet = pick(['ГРОЗА', 'ЖАЛО', 'ОБЕРЕГ', 'ШТОРМ', 'КОЛЫБЕЛЬ', 'ЗАРНИЦА'])
+      w.name = `ТРОФЕЙ «${epithet}»`
+      metaApi.addArtifact({ id: `trophy_${Date.now()}_${irand(0, 99999)}`, name: w.name, kind: 'weapon', rarity: 4, desc: 'Уникальный трофей стража. Экипируется автоматически.', color: w.color, data: w })
+      this.runPermanents.push(w.name)
+      this.hooks.onToast({ text: `УНИКАЛЬНЫЙ ТРОФЕЙ: ${w.name}`, color: w.color })
+      this.floaters.push({ x: this.p.x, y: this.p.y - 26, text: w.name, color: w.color, life: 1.6, size: 7 })
+      audio.companion()
       return
     }
     const def = pick(pool)
-    if (def.kind === 'artifact') {
+    if (def.kind === 'blueprint') {
+      const comp = metaApi.addBlueprint(def.id, def.compDefKind || 'mech', 'ПРОТО-МЕХ', def.rarity, def.color)
+      if (comp) {
+        this.runPermanents.push(def.name)
+        this.hooks.onToast({ text: `ЧЕРТЁЖ: ${def.name} (ОТСЕК ОТРЯДА)`, color: def.color })
+      }
+    } else if (def.kind === 'weapon') {
+      const w = genWeapon(def.rarity, def.kitIdx ?? -1)
+      w.name = def.name
+      const res = metaApi.addArtifact({ id: def.id, name: def.name, kind: 'weapon', rarity: def.rarity, desc: def.desc, color: def.color, data: w })
+      if (res.item) {
+        this.runPermanents.push(def.name)
+        this.hooks.onToast({ text: `ПОСТОЯННОЕ ОРУЖИЕ: ${def.name}`, color: def.color })
+        this.floaters.push({ x: this.p.x, y: this.p.y - 26, text: def.name, color: def.color, life: 1.6, size: 7 })
+      }
+    } else if (def.kind === 'armor') {
+      const a = genArmor(def.rarity)
+      a.slot = (def.slot as typeof a.slot) ?? a.slot
+      a.name = def.name
+      const res = metaApi.addArtifact({ id: def.id, name: def.name, kind: 'armor', rarity: def.rarity, desc: def.desc, color: def.color, data: a })
+      if (res.item) {
+        this.runPermanents.push(def.name)
+        this.hooks.onToast({ text: `ПОСТОЯННАЯ БРОНЯ: ${def.name}`, color: def.color })
+        this.floaters.push({ x: this.p.x, y: this.p.y - 26, text: def.name, color: def.color, life: 1.6, size: 7 })
+      }
+    } else if (def.kind === 'module') {
+      const res = metaApi.addArtifact({ id: def.id, name: def.name, kind: 'module', rarity: def.rarity, desc: def.desc, color: def.color, data: def.mods })
+      if (res.item) {
+        this.runPermanents.push(def.name)
+        this.hooks.onToast({ text: `ПОСТОЯННЫЙ МОДУЛЬ: ${def.name}`, color: def.color })
+        this.floaters.push({ x: this.p.x, y: this.p.y - 26, text: def.name, color: def.color, life: 1.6, size: 7 })
+      }
+    } else {
       const res = metaApi.addArtifact({ id: def.id, name: def.name, kind: 'artifact', rarity: def.rarity, desc: def.desc, color: def.color })
       if (res.item) {
         this.runPermanents.push(def.name)
         this.hooks.onToast({ text: `ПОСТОЯННЫЙ ПРЕДМЕТ: ${def.name}`, color: def.color })
         this.floaters.push({ x: this.p.x, y: this.p.y - 26, text: def.name, color: def.color, life: 1.6, size: 7 })
-      }
-    } else {
-      const comp = metaApi.addBlueprint(def.id, def.compDefKind || 'mech', 'ПРОТО-МЕХ', def.rarity, def.color)
-      if (comp) {
-        this.runPermanents.push(def.name)
-        this.hooks.onToast({ text: `ЧЕРТЁЖ: ${def.name} (ОТСЕК ОТРЯДА)`, color: def.color })
       }
     }
     audio.companion()
@@ -1472,24 +1580,28 @@ export class Engine {
       if (target) {
         c.aim = Math.atan2(target.y - c.y, target.x - c.x)
         if (c.fireCd <= 0) {
-          const wBoost = c.weapon ? c.weapon.rateBoost : 0
-          c.fireCd = 1 / (c.def.rate * mRate * (1 + wBoost))
+          // экипированное оружие меняет снаряд, урон и темп (а не просто «подсветку»)
+          const w = c.weapon && (c.weapon.dmg ?? 0) > 0 ? c.weapon : null
+          const proj = w && w.proj ? w.proj : c.def.proj
+          const baseDmg = w ? w.dmg! * 0.55 + c.def.dmg * 0.25 : c.def.dmg
+          const baseRate = w ? Math.min(9, w.rate! * 0.55) : c.def.rate
+          c.fireCd = 1 / (baseRate * mRate)
           const shots = 1 + (rnd() < mSalvo ? (mSalvo >= 0.6 ? 2 : 1) : 0)
           for (let s = 0; s < shots; s++) {
             const isCrit = rnd() < mCrit
-            const dmg = (c.def.dmg * mDmg + (c.weapon ? c.weapon.dmgBoost : 0)) * (isCrit ? 2 : 1)
-            const bs = 190
+            const dmg = baseDmg * mDmg * (isCrit ? 2 : 1)
+            const bs = proj === 'rail' ? 300 : proj === 'rocket' ? 150 : 190
             this.bullets.push({
               x: c.x + Math.cos(c.aim) * 8, y: c.y - 3 + Math.sin(c.aim) * 8,
               vx: Math.cos(c.aim + (s ? 0.12 : 0)) * bs, vy: Math.sin(c.aim + (s ? 0.12 : 0)) * bs,
-              dmg, kind: c.def.proj, color: isCrit ? '#ffd54a' : c.pal.accent, r: 2,
-              explosive: (c.def.proj === 'rocket' ? 12 : 0) + mBlast * 7,
+              dmg, kind: proj, color: isCrit ? '#ffd54a' : (w ? w.color : c.pal.accent), r: proj === 'rocket' ? 3 : 2,
+              explosive: (proj === 'rocket' ? 12 : 0) + mBlast * 7,
               pierce: false, pierceLeft: mPierce > 0 ? mPierce : undefined,
               friendly: true, life: 1.2, hit: new Set(),
             })
           }
-          this.muzzle(c.x + Math.cos(c.aim) * 10, c.y - 3 + Math.sin(c.aim) * 10, c.pal.accent)
-          audio.shoot(c.def.proj === 'bullet' ? 'bullet' : c.def.proj)
+          this.muzzle(c.x + Math.cos(c.aim) * 10, c.y - 3 + Math.sin(c.aim) * 10, w ? w.color : c.pal.accent)
+          audio.shoot(proj === 'bullet' ? 'bullet' : proj)
         }
       } else c.aim = p.aim
     }
@@ -1500,7 +1612,7 @@ export class Engine {
     const w = p.weapons[wIdx] as Weapon | undefined
     const comp = this.companions[cIdx]
     if (!w || !comp) return
-    comp.weapon = { name: w.name, color: w.color, dmgBoost: Math.round(w.dmg * 0.6), rateBoost: Math.min(0.8, w.rate * 0.06) }
+    comp.weapon = { name: w.name, color: w.color, dmgBoost: Math.round(w.dmg * 0.6), rateBoost: Math.min(0.8, w.rate * 0.06), proj: w.proj, dmg: w.dmg, rate: w.rate }
     p.weapons.splice(wIdx, 1)
     if (p.cur >= p.weapons.length) p.cur = Math.max(0, p.weapons.length - 1)
     const nw = this.curWeapon()
@@ -1785,14 +1897,17 @@ export class Engine {
 
   collectWeapon(w: Weapon) {
     const p = this.p
-    if (p.weapons.length < 5) { p.weapons.push(w); p.cur = p.weapons.length - 1 }
+    if (p.weapons.length < 5) p.weapons.push(w)
     else {
+      // арсенал полон: новое вытесняет самое слабое
       const ws = p.weapons as Weapon[]
       let wi = 0, worst = Infinity
       ws.forEach((x, i) => { const s = weaponScore(x); if (s < worst) { worst = s; wi = i } })
       p.weapons[wi] = w
-      p.cur = wi
     }
+    // слоты всегда отсортированы по силе: 1-й — самое мощное, последний — самое слабое
+    p.weapons.sort((a, b) => weaponScore(b as Weapon) - weaponScore(a as Weapon))
+    p.cur = p.weapons.indexOf(w)
     w.magCur = w.mag
     p.mag = w.mag; p.reloadT = 0; p.fireCd = 0.15
     audio.pickup()
@@ -1823,6 +1938,7 @@ export class Engine {
     b.dmg += this.permBonus.dmg
     b.rate += this.permBonus.rate
     b.acc += this.permBonus.acc
+    b.crit += this.permBonus.crit
     const oldMax = p.maxHp
     p.maxHp = 100 + b.hp
     p.hp = Math.min(p.maxHp, p.hp + (p.maxHp - oldMax))
