@@ -131,6 +131,7 @@ export class Engine {
   spawnT = 0
   snapT = 0
   spawnEnemyT = 0
+  landingOffset = { x: 0, y: 0 }
   weatherT = 0
   miniT = 0
   poiT = 0
@@ -283,11 +284,14 @@ export class Engine {
   // ============================================================
   beginLaunch() { this.overlay = 'map' }
 
-  launchExpedition(regionId: string) {
+  launchExpedition(regionId: string, site = 0) {
     const region = getRegion(regionId)
     this.region = region
     this.seed = (Date.now() % 1000000) + 1
     this.streams = makeStreams(this.seed)
+    // детерминированная точка высадки вблизи стартового комплекса
+    const lz = this.streams.world
+    this.landingOffset = { x: (site - 1) * 90 + lz.range(-30, 30), y: lz.range(-30, 30) }
     this.chunks.clear(); this.chunkOrder = []; this.obstacles.clear(); this.materialized.clear()
     this.enemies = []; this.bullets = []; this.particles = []; this.floaters = []
     this.capsules = []; this.pickups = []; this.companions = []; this.pods = []
@@ -306,13 +310,15 @@ export class Engine {
     this.p.weapons = [w]
     this.p.mag = w.mag
     this.time = 0; this.spawnT = 0; this.dead = false; this.deadT = 0
-    this.spawnAnim = 0.001; this.camX = 0; this.camY = 0; this.shake = 0
+    this.p.x = this.landingOffset.x; this.p.y = this.landingOffset.y
+    this.spawnAnim = 0.001; this.camX = this.p.x; this.camY = this.p.y; this.shake = 0
     this.spawnEnemyT = 3
-    this.pois.set('starter', makeStarterDungeon(this.seed, region))
-    this.capsules.push(this.makeCapsule(200, 160, 1, false))
+    const starter = makeStarterDungeon(this.seed, region)
+    this.pois.set('starter', starter)
+    this.capsules.push(this.makeCapsule(this.p.x + 200, this.p.y + 160, 1, false))
     for (const uid of metaApi.state.deployed) {
       const pc = metaApi.state.companions.find((c) => c.uid === uid)
-      if (pc) this.spawnCompanion(40 * rnd() - 20, 40 * rnd() - 20, pc.defKind, pc.name, true, pc.uid)
+      if (pc) this.spawnCompanion(this.p.x + 40 * rnd() - 20, this.p.y + 40 * rnd() - 20, pc.defKind, pc.name, true, pc.uid)
     }
     this.mode = 'game'
     this.overlay = null
@@ -322,7 +328,7 @@ export class Engine {
     this.hooks.onStart()
     this.hooks.onToast({ text: `ЭКСПЕДИЦИЯ: ${region.name}`, color: region.color })
     window.setTimeout(() => this.hooks.onToast({ text: 'СИГНАЛ: КОМПЛЕКС ОБНАРУЖЕН НА СЕВЕРО-ВОСТОКЕ', color: '#3fe0ff' }), 2600)
-    this.burst(0, 0, 26, '#7dffea', 3)
+    this.burst(this.p.x, this.p.y, 26, '#7dffea', 3)
     audio.teleport()
   }
 

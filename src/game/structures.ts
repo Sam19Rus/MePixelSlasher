@@ -141,7 +141,7 @@ const PLANS: Record<DungeonType, Plan[]> = {
     { room: [4, 11, 7, 7], kind: 'storage', name: 'ТРЮМ' },
     { room: [29, 11, 9, 7], kind: 'tech', name: 'ДВИГАТЕЛЬНЫЙ' },
     { room: [12, 2, 16, 8], kind: 'boss', name: 'МОСТИК' },
-    { room: [4, 2, 7, 7], kind: 'secret', name: 'КАПITАНСКАЯ КАЮТА' },
+    { room: [4, 2, 7, 7], kind: 'secret', name: 'КАПИТАНСКАЯ КАЮТА' },
   ],
 }
 

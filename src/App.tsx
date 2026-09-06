@@ -82,7 +82,7 @@ export default function App() {
   }, [snap, screen])
 
   const eng = () => engRef.current!
-  const launch = (regionId: string) => { audio.ensure(); audio.click(); eng().launchExpedition(regionId) }
+  const launch = (regionId: string, site: number) => { audio.ensure(); audio.click(); eng().launchExpedition(regionId, site) }
   const toShip = () => { audio.click(); eng().returnToShip() }
   const revive = () => { audio.ensure(); audio.click(); eng().launchExpedition(eng().region.id) }
 
@@ -476,9 +476,45 @@ function Overlay({ title, sub, onClose, children }: { title: string; sub: string
 }
 
 // ---------- КАРТА РЕГИОНОВ ----------
-function MapOverlay({ snap, onLaunch, onClose }: { snap: Snap; onLaunch: (id: string) => void; onClose: () => void }) {
+// Детерминированный рельеф: органичные территории, горы, реки, леса, кратеры, ледники
+function srand(seed: number) { let s = seed >>> 0 || 1; return () => { s = (s + 0x6d2b79f5) >>> 0; let t = s; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296 } }
+function blob(cx: number, cy: number, r: number, seed: number, n = 10): string {
+  const rnd = srand(seed)
+  const pts: string[] = []
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2
+    const rr = r * (0.72 + rnd() * 0.42)
+    pts.push(`${(cx + Math.cos(a) * rr).toFixed(1)},${(cy + Math.sin(a) * rr * 0.82).toFixed(1)}`)
+  }
+  return `M${pts.join(' L')} Z`
+}
+// рельефные глифы региона (горы/деревья/кратеры/лёд) — детерминированно
+function terrain(seed: number, cx: number, cy: number, kind: string) {
+  const rnd = srand(seed)
+  const out: { x: number; y: number; s: number; k: string }[] = []
+  const n = 6
+  for (let i = 0; i < n; i++) {
+    out.push({ x: cx + (rnd() - 0.5) * 26, y: cy + (rnd() - 0.5) * 18, s: 2 + rnd() * 3, k: kind })
+  }
+  return out
+}
+
+function MapOverlay({ snap, onLaunch, onClose }: { snap: Snap; onLaunch: (id: string, site: number) => void; onClose: () => void }) {
   const [sel, setSel] = useState(REGIONS[0].id)
+  const [site, setSite] = useState(0)
   const r = REGIONS.find((x) => x.id === sel)!
+  const ri = REGIONS.findIndex((x) => x.id === sel)
+  // 3 детерминированные зоны высадки в регионе
+  const sites = (() => {
+    const rnd = srand(ri * 777 + 13)
+    const names = ['СЕДЛО', 'УЩЕЛЬЕ', 'ПЛАТО']
+    return [0, 1, 2].map((i) => ({
+      x: r.mapX * 100 + (rnd() - 0.5) * r.mapR * 120,
+      y: r.mapY * 100 + (rnd() - 0.5) * r.mapR * 90,
+      name: names[i],
+    }))
+  })()
+  const pickRegion = (id: string) => { setSel(id); setSite(0) }
   return (
     <div className="fixed inset-0 z-[55] bg-[#04060dee] flex items-center justify-center font-body">
       <div className="panel px-8 py-6 w-[860px] max-w-[96vw]">
@@ -491,33 +527,64 @@ function MapOverlay({ snap, onLaunch, onClose }: { snap: Snap; onLaunch: (id: st
         </div>
 
         <div className="mt-5 flex gap-6 flex-col md:flex-row">
-          {/* планета */}
-          <div className="relative w-[340px] h-[300px] shrink-0 mx-auto">
-            <div className="absolute inset-4 rounded-full" style={{ background: 'radial-gradient(circle at 38% 32%, #2e4a5e, #16283a 55%, #0a1520 100%)', boxShadow: 'inset -18px -14px 40px rgba(0,0,0,0.7), 0 0 40px rgba(63,224,255,0.12)' }} />
-            <div className="absolute inset-4 rounded-full overflow-hidden opacity-30" style={{ background: 'repeating-linear-gradient(12deg, transparent 0 16px, rgba(255,255,255,0.12) 16px 18px)' }} />
-            {REGIONS.map((reg) => {
-              const active = reg.id === sel
-              return (
-                <button
-                  key={reg.id}
-                  onMouseEnter={() => { audio.ensure(); audio.hover(); setSel(reg.id) }}
-                  onClick={() => { audio.click(); setSel(reg.id) }}
-                  className="absolute pointer-events-auto flex flex-col items-center"
-                  style={{ left: `${reg.mapX * 100}%`, top: `${reg.mapY * 100}%`, width: `${reg.mapR * 260}px`, transform: 'translate(-50%,-50%)' }}
-                >
-                  <span
-                    className="block rounded-full transition-all"
-                    style={{
-                      width: '100%', paddingBottom: '78%',
-                      background: `radial-gradient(circle at 40% 35%, ${reg.color}cc, ${reg.color}44 60%, ${reg.color}18)`,
-                      border: active ? `2px solid ${reg.color}` : '1px solid rgba(255,255,255,0.15)',
-                      boxShadow: active ? `0 0 18px ${reg.color}aa` : 'none',
-                    }}
-                  />
-                  <span className="font-display text-[6px] mt-1.5 whitespace-nowrap" style={{ color: active ? reg.color : '#7e93a8' }}>{reg.name}</span>
-                </button>
-              )
-            })}
+          {/* топографическая карта поверхности */}
+          <div className="relative w-[380px] h-[320px] shrink-0 mx-auto">
+            <svg viewBox="0 0 100 84" className="w-full h-full" style={{ filter: 'drop-shadow(0 0 24px rgba(63,224,255,0.1))' }}>
+              <defs>
+                <radialGradient id="ocean" cx="42%" cy="34%" r="90%">
+                  <stop offset="0%" stopColor="#122438" />
+                  <stop offset="100%" stopColor="#070e18" />
+                </radialGradient>
+              </defs>
+              <rect x="0" y="0" width="100" height="84" fill="url(#ocean)" />
+              {/* сетка координат */}
+              {[...Array(9)].map((_, i) => <line key={`v${i}`} x1={(i + 1) * 10} y1="0" x2={(i + 1) * 10} y2="84" stroke="#1a2c40" strokeWidth="0.15" />)}
+              {[...Array(7)].map((_, i) => <line key={`h${i}`} x1="0" y1={(i + 1) * 12} x2="100" y2={(i + 1) * 12} stroke="#1a2c40" strokeWidth="0.15" />)}
+              {/* материк */}
+              <path d={blob(50, 42, 44, 99, 14)} fill="#1b2b3a" stroke="#2e4a5e" strokeWidth="0.6" />
+              <path d={blob(50, 42, 40, 55, 12)} fill="#223648" />
+              {/* регионы: территории + рельеф + подписи */}
+              {REGIONS.map((reg, idx) => {
+                const active = reg.id === sel
+                const cx = reg.mapX * 100, cy = reg.mapY * 84
+                const rr = reg.mapR * 95
+                const kinds: Record<string, string> = { scrapline: 'm', ashfield: 'r', frostgap: 'i', sporesea: 'f', emberfall: 'v' }
+                return (
+                  <g key={reg.id} onClick={() => { audio.click(); pickRegion(reg.id) }} onMouseEnter={() => { audio.ensure(); audio.hover(); pickRegion(reg.id) }} style={{ cursor: 'pointer' }}>
+                    <path d={blob(cx, cy, rr, idx * 31 + 7, 11)} fill={`${reg.color}${active ? '55' : '2b'}`} stroke={reg.color} strokeWidth={active ? 0.8 : 0.3} strokeOpacity={active ? 1 : 0.5} style={{ transition: 'all .15s' }} />
+                    {terrain(idx * 977 + 3, cx, cy, kinds[reg.id]).map((g2, j) =>
+                      g2.k === 'm' ? <path key={j} d={`M${g2.x - g2.s},${g2.y + g2.s} L${g2.x},${g2.y - g2.s} L${g2.x + g2.s},${g2.y + g2.s} Z`} fill="#4a5f73" opacity="0.8" />
+                        : g2.k === 'f' ? <circle key={j} cx={g2.x} cy={g2.y} r={g2.s * 0.45} fill="#2e5e3a" opacity="0.85" />
+                        : g2.k === 'v' ? <g key={j}><circle cx={g2.x} cy={g2.y} r={g2.s * 0.5} fill="#5e2a1e" /><circle cx={g2.x} cy={g2.y} r={g2.s * 0.22} fill={active ? '#ff8a3d' : '#c2451e'} /></g>
+                        : g2.k === 'i' ? <rect key={j} x={g2.x - g2.s * 0.5} y={g2.y - g2.s * 0.3} width={g2.s} height={g2.s * 0.6} fill="#bfe8f5" opacity="0.7" />
+                        : <path key={j} d={`M${g2.x - g2.s},${g2.y} q${g2.s},-${g2.s} ${g2.s * 2},0`} fill="none" stroke="#8a6a4a" strokeWidth="0.5" opacity="0.7" />
+                    )}
+                    <text x={cx} y={cy + rr + 4.5} textAnchor="middle" fontSize="2.6" fontFamily="'Press Start 2P',monospace" fill={active ? reg.color : '#7e93a8'}>{reg.name}</text>
+                    {/* индикатор опасности */}
+                    {[...Array(reg.danger)].map((_, d2) => <rect key={d2} x={cx - reg.danger * 1.1 + d2 * 2.2} y={cy + rr + 6.2} width="1.7" height="1.1" fill={active ? reg.color : '#5e7a90'} />)}
+                  </g>
+                )
+              })}
+              {/* зоны высадки выбранного региона */}
+              {sites.map((s, i) => {
+                const on = i === site
+                return (
+                  <g key={i} onClick={(e) => { e.stopPropagation(); audio.click(); setSite(i) }} style={{ cursor: 'pointer' }}>
+                    <circle cx={s.x} cy={s.y} r={on ? 3.4 : 2.4} fill="none" stroke={on ? '#ffd54a' : '#8fa5ba'} strokeWidth="0.5" opacity={on ? 1 : 0.6}>
+                      {on && <animate attributeName="r" values="3;4.2;3" dur="1.2s" repeatCount="indefinite" />}
+                    </circle>
+                    <circle cx={s.x} cy={s.y} r="0.9" fill={on ? '#ffd54a' : '#8fa5ba'} />
+                    {on && <path d={`M${s.x},${s.y - 6.4} l1.6,2.6 h-3.2 Z`} fill="#ffd54a" />}
+                    <text x={s.x} y={s.y + 6.2} textAnchor="middle" fontSize="1.9" fontFamily="'Press Start 2P',monospace" fill={on ? '#ffd54a' : '#7e93a8'}>{s.name}</text>
+                  </g>
+                )
+              })}
+            </svg>
+            {/* сканирующая линия */}
+            <div className="absolute inset-0 overflow-hidden pointer-events-none rounded">
+              <div className="absolute left-0 right-0 h-[2px] opacity-30" style={{ background: 'linear-gradient(90deg,transparent,#3fe0ff,transparent)', animation: 'scanY 4s linear infinite' }} />
+            </div>
+            <style>{`@keyframes scanY{0%{top:0}100%{top:100%}}`}</style>
           </div>
 
           {/* детали региона */}
@@ -537,9 +604,20 @@ function MapOverlay({ snap, onLaunch, onClose }: { snap: Snap; onLaunch: (id: st
               <InfoRow label="ЛУТ-ПРОФИЛЬ">
                 <span className="text-[11px] text-[#c9d8e6]">редкость +{r.lootBias.rarityBoost} · свои наборы оружия</span>
               </InfoRow>
+              <InfoRow label="ЗОНА ВЫСАДКИ">
+                <span className="flex gap-1.5">
+                  {sites.map((s, i) => (
+                    <button key={i} onClick={() => { audio.click(); setSite(i) }} onMouseEnter={() => { audio.ensure(); audio.hover() }}
+                      className="font-display text-[7px] px-2 py-1 border transition-colors"
+                      style={{ borderColor: i === site ? '#ffd54a' : '#1e2a38', color: i === site ? '#ffd54a' : '#5e7a90', background: i === site ? '#ffd54a15' : 'transparent' }}>
+                      {s.name}
+                    </button>
+                  ))}
+                </span>
+              </InfoRow>
             </div>
             <button
-              onClick={() => onLaunch(r.id)}
+              onClick={() => onLaunch(r.id, site)}
               onMouseEnter={() => { audio.ensure(); audio.hover() }}
               className="mt-5 pointer-events-auto font-display text-[11px] text-[#0a0f16] bg-[#f5a623] px-8 py-3.5 tracking-widest hover:bg-[#ffd54a] active:translate-y-0.5"
               style={{ clipPath: 'polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 12px 100%, 0 calc(100% - 12px))', boxShadow: '5px 5px 0 rgba(63,224,255,0.3)' }}
