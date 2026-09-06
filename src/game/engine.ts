@@ -113,6 +113,7 @@ export class Engine {
   contract = { kills: 0, idx: 0 }
   runPermanents: string[] = []
   runBosses = 0
+  banked = false
 
   p = this.freshPlayer()
   permBonus = { hp: 0, dmg: 0, rate: 0, acc: 0 }
@@ -285,6 +286,7 @@ export class Engine {
     this.director.reset()
     this.contract = { kills: 0, idx: 0 }
     this.runPermanents = []; this.runBosses = 0
+    this.banked = false
     this.compUp = {}
     this.p = this.freshPlayer()
     this.permBonus = artifactBonuses(metaApi.state.artifacts)
@@ -313,9 +315,17 @@ export class Engine {
     audio.teleport()
   }
 
-  returnToShip() {
+  // Идемпотентный учёт итогов экспедиции: кредиты и статистика банятся один раз
+  // (и при эвакуации, и при смерти — без двойного начисления)
+  bankExpedition() {
+    if (this.banked) return
+    this.banked = true
     metaApi.earnCredits(this.p.credits)
     metaApi.bumpStats(this.contract.kills, this.runBosses)
+  }
+
+  returnToShip() {
+    this.bankExpedition()
     this.mode = 'ship'
     this.overlay = null
     this.paused = false
@@ -523,6 +533,7 @@ export class Engine {
           this.deadT += dt
           if (this.deadT > 1.6 && this.deadT < 900) {
             this.deadT = 1000
+            this.bankExpedition()
             this.hooks.onDeath({
               kills: this.contract.kills, credits: this.p.credits, time: Math.floor(this.time),
               companions: this.companions.length, permanents: [...this.runPermanents],

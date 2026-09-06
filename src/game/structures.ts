@@ -91,7 +91,10 @@ export function makeDungeon(seed: number, ox: number, oy: number, tier: number):
   const secret = room(17, 2, 5, 4, 'secret')
   // коридоры
   carve(d, 10, 7, 11, 9); carve(d, 10, 17, 11, 18)
-  carve(d, 17, 5, 18, 8); carve(d, 22, 4, 23, 8)
+  carve(d, 21, 4, 22, 8)
+  // проём во внешней стене — вход в комплекс (западная стена у шлюза)
+  d.tiles[12 * cols + 0] = 0
+  d.tiles[13 * cols + 0] = 0
   // дверь босса
   d.door = { x: 26, y: 12, open: false }
   d.tiles[12 * cols + 26] = 2
@@ -122,19 +125,21 @@ export function makeDungeon(seed: number, ox: number, oy: number, tier: number):
   const addHazard = (tx: number, ty: number) => { d.tiles[ty * cols + tx] = 5; d.hazards.push({ x: tx * TILE + 8, y: ty * TILE + 8 }) }
   addHazard(16, 12); addHazard(18, 13)
   addHazard(22, 10); addHazard(24, 15); addHazard(23, 12)
-  // секрет: тайник за хрупкой стеной
-  d.tiles[8 * cols + 22] = 4
+  // секрет: тайник за хрупкой стеной (коридор x=21..22 запечатан на y=6)
+  d.tiles[6 * cols + 21] = 4
+  d.tiles[6 * cols + 22] = 4
   d.secretCache = { x: (secret.x + 2) * TILE + 4, y: (secret.y + 2) * TILE + 4, tier: tier + 1 }
-  // точка появления игрока внутри входа
-  d.hpx = (entry.x + 2) * TILE + 8
-  d.hpy = (entry.y + 2) * TILE + 8
+  // точка появления игрока внутри входа (entry уже в пикселях)
+  d.hpx = entry.x
+  d.hpy = entry.y
   return d
 }
 
 export function makeStarterDungeon(seed: number, region: RegionDef): Poi {
   const rng = new Rng(seed * 31 + 7)
   const x = 220 + rng.range(0, 60), y = -190 - rng.range(0, 50)
-  const dungeon = makeDungeon(seed * 77 + 5, x - 17 * TILE, y - 13 * TILE, region.tier)
+  // вход (проем западной стены) совпадает с точкой POI, где рисуется бункер
+  const dungeon = makeDungeon(seed * 77 + 5, x, y - 12 * TILE, region.tier)
   return {
     id: 'starter', type: 'bunker', x, y, state: 'hostile',
     guards: 0, guardsLeft: 0, dungeon,
@@ -159,7 +164,8 @@ export function poiForCell(seed: number, region: RegionDef, cx: number, cy: numb
   const id = `${region.id}_${cx}_${cy}`
   const guards = def.guards + Math.floor(rng.next() * 2)
   const hasDungeon = rng.next() < def.dungeonChance && (type === 'factory' || type === 'crash' || type === 'bunker')
-  const dungeon = hasDungeon ? makeDungeon((seed ^ (cx * 2654435761) ^ (cy * 40503)) >>> 0, x - 17 * TILE, y - 13 * TILE, region.tier) : undefined
+  // вход (проем западной стены) совпадает с точкой POI, где рисуется структура
+  const dungeon = hasDungeon ? makeDungeon((seed ^ (cx * 2654435761) ^ (cy * 40503)) >>> 0, x, y - 12 * TILE, region.tier) : undefined
   return {
     id, type, x, y,
     state: guards > 0 ? 'hostile' : 'neutral',
