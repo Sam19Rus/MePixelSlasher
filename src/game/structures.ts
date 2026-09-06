@@ -262,11 +262,10 @@ function buildAttempt(seed: number, ox: number, oy: number, tier: number, type: 
 
   // ---- вход снизу (два тайла двери в нижней стене entry) ----
   const ex = ent.x + Math.floor(ent.w / 2)
-  d.entry = { x: (ex - ent.x) * TILE + 8, y: (ent.h - 1) * TILE }
+  // entry — в ЛОКАЛЬНЫХ координатах данжа (относительно ox/oy), как ожидает движок
+  d.entry = { x: ex * TILE + 8, y: (ent.y + ent.h - 1) * TILE + 8 }
   setT(d, ex - 1, ent.y + ent.h, 6)
   setT(d, ex, ent.y + ent.h, 6)
-  // мировой проём должен совпасть с doorWorld (см. buildPoi) — фиксируем относительно ox
-  ;(d as { _ex?: number })._ex = ex
 
   // ---- дверь босса на хребте перед верхней полосой ----
   const doorY = boss.y + boss.h // сразу под босс-комнатой
@@ -381,8 +380,7 @@ function buildFallback(seed: number, ox: number, oy: number, tier: number, type:
   mk(rows - 24, 4, 'armory')
   const boss = mk(2, 5, 'boss', 8)
   carve(d, 8, 7, 11, 8)
-  d.entry = { x: (9 - ent.x) * TILE + 8, y: (ent.h - 1) * TILE }
-  ;(d as { _ex?: number })._ex = 9
+  d.entry = { x: 9 * TILE + 8, y: (ent.y + ent.h - 1) * TILE + 8 }
   setT(d, 9, rows - 2, 6); setT(d, 10, rows - 2, 6)
   setT(d, 9, 7, 2); setT(d, 10, 7, 2)
   d.door = { x: 9, y: 7, open: false }
@@ -405,7 +403,8 @@ function buildFallback(seed: number, ox: number, oy: number, tier: number, type:
 function validate(d: DungeonLayout): boolean {
   const { cols, rows, tiles } = d
   const pass = (t: DungeonTile) => t === 0 || t === 2 || t === 3 || t === 4 || t === 5 || t === 6
-  const start = { x: Math.floor(d.entry.x / TILE), y: rows - 2 }
+  // старт — клетка, где игрок реально появляется (внутри входной комнаты)
+  const start = { x: Math.floor(d.entry.x / TILE), y: Math.floor(d.entry.y / TILE) }
   const seen = new Uint8Array(cols * rows)
   const q: number[] = [start.y * cols + start.x]
   seen[q[0]] = 1
